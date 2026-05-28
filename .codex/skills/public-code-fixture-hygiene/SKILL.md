@@ -26,7 +26,7 @@ Public source and tests must describe general AutoLabOS behavior, not one histor
 - When a leak is found, extend the public-code sanitization guard with the exact newly discovered identifier family so source, tests, and local skills cannot reintroduce it.
 - Treat reader-visible fixture labels with numeric condition values as leaks too; public tests should use baseline/candidate labels unless the values are supplied by the test input being validated.
 - Prefer neutral callable/file names such as run_condition_sweep_experiment.py, run_locked_condition_sweep, and benchmark_task_a/benchmark_task_b over method-, model-, or dataset-specific names in public fixtures.
-- Treat generated condition-marker families as leaks, not only individual strings. For example, public code should reject reusable markers shaped like `rank_<n>_dropout_<x_y>` unless those values come from user/run artifacts being inspected.
+- Treat generated condition-marker families as leaks, not only individual strings. For example, public code should reject reusable method-specific numeric condition-marker families unless those values come from user/run artifacts being inspected.
 - Keep cached-paper, planner-timeout, and fallback-text fixtures method-neutral. Avoid embedding a concrete method-family recipe phrase unless the method name is the explicit subject of the behavior under test.
 - Generic metric vocabularies such as accuracy, F1, BLEU, ROUGE, perplexity, runtime, latency, memory, and throughput are allowed when they are part of reusable metric extraction logic rather than a one-off experiment fixture.
 

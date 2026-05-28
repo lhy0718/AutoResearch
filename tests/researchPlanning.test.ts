@@ -280,6 +280,26 @@ describe("researchPlanning helpers", () => {
     expect(result.artifacts.llm_trace.single_pass_partial?.completion).toContain("partial single-pass");
   });
 
+  it("keeps hypothesis progress coarse instead of logging streamed token deltas", async () => {
+    const llm = new QueueProgressThenHangLLMClient(["token fragment"]);
+    const progress: string[] = [];
+
+    await generateHypothesesFromEvidence({
+      llm,
+      runTitle: "Multi-Agent Collaboration",
+      runTopic: "Multi-Agent Collaboration",
+      objectiveMetric: "accuracy >= 0.9",
+      evidenceSeeds: [{ evidence_id: "ev_1", claim: "Planning matters." }],
+      branchCount: 4,
+      topK: 2,
+      timeoutMs: 10,
+      onProgress: (message) => progress.push(message)
+    });
+
+    expect(progress).toContain("Captured partial evidence-axis output before the staged hypothesis timeout.");
+    expect(progress.some((message) => message.includes("token fragment"))).toBe(false);
+  });
+
   it("repairs truncated hypothesis-planning JSON and continues the staged pipeline", async () => {
     const llm = new QueueJsonLLMClient([
       '{"summary":"Mapped evidence into one axis.","axes":[{"id":"ax_1","label":"Structured communication","mechanism":"Structured interfaces reduce ambiguity.","intervention":"Compare typed messages against free-form chat.","evaluation_hint":"Measure run-to-run variance.","evidence_links":["ev_1"]}]',

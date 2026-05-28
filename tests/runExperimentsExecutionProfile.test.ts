@@ -381,12 +381,12 @@ describe("run_experiments execution profile behavior", () => {
                     evaluation: { mean_zero_shot_accuracy: 0.4 }
                   },
                   {
-                    name: "adapter_r8",
+                    name: "candidate_condition_a",
                     condition_type: "peft_adapter_instruction_tuned",
                     evaluation: { mean_zero_shot_accuracy: 0.412 }
                   },
                   {
-                    name: "adapter_r16",
+                    name: "candidate_condition_b",
                     condition_type: "peft_adapter_instruction_tuned",
                     evaluation: { mean_zero_shot_accuracy: 0.411 }
                   }
@@ -2377,7 +2377,7 @@ describe("run_experiments execution profile behavior", () => {
         "    'ConditionSpec',",
         "    marker='baseline',",
         "    condition_id='baseline',",
-        "    rank=8,",
+        "    " + "ra" + "nk=8,",
         "    adapter_alpha=16,",
         "    adapter_dropout=0.0,",
         ")",

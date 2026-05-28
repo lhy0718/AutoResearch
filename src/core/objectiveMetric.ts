@@ -270,6 +270,20 @@ export function evaluateObjectiveMetric(
   const matched = findMatchingMetric(matchableMetrics, preferredKeys);
 
   if (!matched) {
+    const directPreferred = findDirectPreferredTopLevelMetric(enrichedMetrics, preferredKeys);
+    if (directPreferred && (!relativeObjective || isRelativeMetricKey(directPreferred.key))) {
+      return applyObjectiveRequirementChecks(
+        buildObjectiveEvaluation({
+          rawObjectiveMetric,
+          profile,
+          preferredKeys,
+          matched: directPreferred
+        }),
+        metrics,
+        rawObjectiveMetric
+      );
+    }
+
     const inferred = inferBestEffortMetricMatch(flattened, preferredKeys, rawObjectiveMetric);
     if (inferred) {
       return applyObjectiveRequirementChecks(
@@ -740,6 +754,28 @@ function flattenNumericMetrics(
     }
   }
   return items;
+}
+
+function findDirectPreferredTopLevelMetric(
+  metrics: Record<string, unknown>,
+  preferredKeys: string[]
+): { key: string; value: number } | undefined {
+  const normalizedTargets = preferredKeys.map(normalizeMetricKey).filter(Boolean);
+  for (const key of preferredKeys) {
+    const value = metrics[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return { key, value };
+    }
+  }
+  for (const [key, value] of Object.entries(metrics)) {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      continue;
+    }
+    if (normalizedTargets.includes(normalizeMetricKey(key))) {
+      return { key, value };
+    }
+  }
+  return undefined;
 }
 
 function findMatchingMetric(

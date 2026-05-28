@@ -1009,7 +1009,7 @@ describe("scientificWriting", () => {
       ],
       condition_comparisons: [
         {
-          id: "rank32_drop005_vs_baseline",
+          id: "candidate_condition_vs_baseline",
           label: "candidate condition b vs baseline condition",
           source: "metrics.condition_summaries",
           summary: "Candidate condition b improves average accuracy relative to the locked baseline.",
@@ -1034,7 +1034,7 @@ describe("scientificWriting", () => {
         stability_metrics: [{ key: "run_accuracy_delta_vs_baseline_std", value: 0.0748 }],
         effect_estimates: [
           {
-            comparison_id: "rank32_drop005_vs_baseline",
+            comparison_id: "candidate_condition_vs_baseline",
             metric_key: "accuracy_delta_vs_baseline",
             delta: 0.0667,
             direction: "positive",
@@ -1962,10 +1962,10 @@ describe("scientificWriting", () => {
           caption: "Condition-level mean accuracy across the executed condition-parameter grid; labels identify the locked baseline row.",
           rows: [
             { label: "baseline condition", value: 0.333334 },
-            { label: "rank 4 / dropout 0", value: 0.333334 },
+            { label: "candidate condition A", value: 0.333334 },
             { label: "candidate condition d", value: 0.333334 },
             { label: "candidate condition f", value: 0.333334 },
-            { label: "rank 16 / dropout 0", value: 0.333334 },
+            { label: "candidate condition B", value: 0.333334 },
             { label: "One reported condition-level 95% interval", value: 0.333334 },
             { label: "candidate condition e", value: 0.333334 },
             { label: "candidate condition b", value: 0.416666 }
@@ -2972,7 +2972,7 @@ describe("scientificWriting", () => {
       keywords: ["adapter"],
       sections: [
         { heading: "Introduction", paragraphs: ["We study a fixed-budget condition-parameter preflight."] },
-        { heading: "Method", paragraphs: ["Rank 8 with dropout 0.0 served as the locked baseline."] },
+        { heading: "Method", paragraphs: ["The locked baseline condition served as the comparison anchor."] },
         {
           heading: "Results",
           paragraphs: [
@@ -3060,7 +3060,7 @@ describe("scientificWriting", () => {
       keywords: ["adapter"],
       sections: [
         { heading: "Introduction", paragraphs: ["We study a fixed-budget condition-parameter preflight."] },
-        { heading: "Method", paragraphs: ["Rank 8 with dropout 0.0 served as the locked baseline."] },
+        { heading: "Method", paragraphs: ["The locked baseline condition served as the comparison anchor."] },
         {
           heading: "Results",
           paragraphs: [
@@ -3133,7 +3133,7 @@ describe("scientificWriting", () => {
       keywords: ["adapter"],
       sections: [
         { heading: "Introduction", paragraphs: ["We study a fixed-budget condition-parameter preflight."] },
-        { heading: "Method", paragraphs: ["Rank 8 with dropout 0.0 served as the locked baseline."] },
+        { heading: "Method", paragraphs: ["The locked baseline condition served as the comparison anchor."] },
         {
           heading: "Results",
           paragraphs: [
@@ -3212,7 +3212,7 @@ describe("scientificWriting", () => {
       keywords: ["adapter"],
       sections: [
         { heading: "Introduction", paragraphs: ["We study a fixed-budget condition-parameter preflight."] },
-        { heading: "Method", paragraphs: ["Rank 8 with dropout 0.0 served as the locked baseline."] },
+        { heading: "Method", paragraphs: ["The locked baseline condition served as the comparison anchor."] },
         {
           heading: "Results",
           paragraphs: [
@@ -3299,7 +3299,7 @@ describe("scientificWriting", () => {
       keywords: ["adapter"],
       sections: [
         { heading: "Introduction", paragraphs: ["We study a fixed-budget condition-parameter preflight."] },
-        { heading: "Method", paragraphs: ["Rank 8 with dropout 0.0 served as the locked baseline."] },
+        { heading: "Method", paragraphs: ["The locked baseline condition served as the comparison anchor."] },
         {
           heading: "Results",
           paragraphs: [
@@ -3539,7 +3539,7 @@ describe("scientificWriting", () => {
       keywords: ["adapter"],
       sections: [
         { heading: "Introduction", paragraphs: ["We study a fixed-budget condition-parameter preflight."] },
-        { heading: "Method", paragraphs: ["Rank 8 with dropout 0.0 served as the locked baseline."] },
+        { heading: "Method", paragraphs: ["The locked baseline condition served as the comparison anchor."] },
         {
           heading: "Results",
           paragraphs: [
@@ -3555,10 +3555,10 @@ describe("scientificWriting", () => {
           caption: "Condition-level mean accuracy across the executed condition-parameter grid; labels identify the locked baseline row.",
           rows: [
             { label: "baseline condition", value: 0.3333 },
-            { label: "rank 4 / dropout 0", value: 0.3333 },
+            { label: "candidate condition A", value: 0.3333 },
             { label: "candidate condition d", value: 0.3333 },
             { label: "candidate condition f", value: 0.3333 },
-            { label: "rank 16 / dropout 0", value: 0.3333 },
+            { label: "candidate condition B", value: 0.3333 },
             { label: "One reported condition-level 95% interval", value: 0.3333 },
             { label: "candidate condition e", value: 0.3333 },
             { label: "candidate condition b", value: 0.4167 }
@@ -3634,7 +3634,7 @@ describe("scientificWriting", () => {
       statistical_summary: {
         effect_estimates: [
           {
-            comparison_id: "rank32_drop005_vs_baseline",
+            comparison_id: "candidate_condition_vs_baseline",
             metric_key: "accuracy_delta_vs_baseline",
             delta: 0.0667,
             direction: "positive",

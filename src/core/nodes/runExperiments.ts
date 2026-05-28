@@ -11,6 +11,7 @@ import { fileExists } from "../../utils/fs.js";
 import {
   evaluateObjectiveMetric,
   ObjectiveMetricEvaluation,
+  ObjectiveMetricProfile,
   resolveObjectiveMetricProfile
 } from "../objectiveMetric.js";
 import {
@@ -73,6 +74,17 @@ import {
   repairPythonMainCallableResolverSpecificitySurface,
   repairPythonMainStudyRunnerDeviceBridgeSurface,
   repairPythonPublicStudyTopLevelRunnerAliasSurface,
+  repairPythonSelectedRunnerArgvDispatchSurface,
+  repairPythonStudyOrchestratorResolverPerRunFilterSurface,
+  repairPythonStudyOrchestratorOrderedPlanArgumentSurface,
+  repairPythonSingleCellExecutorRuntimeKwargsSurface,
+  repairPythonFailureEvidenceNonRecursiveSurface,
+  repairPythonSupportedKwargsSemanticAliasSurface,
+  repairPythonSingleRunExecutionBridgeSurface,
+  repairPythonSingleCellResolverAvoidSelfSurface,
+  repairPythonObservedAverageAccuracyAliasSurface,
+  repairPythonEvaluationSummaryObservedAverageSurface,
+  repairPythonLoopRunRecordRawResultMetricProjectionSurface,
   repairPythonHighLevelWorkloadContextAliasSurface,
   repairPythonConditionScheduleMarkerParameterSurface,
   repairPythonLockedConditionSingleRunnerBridgeSurface,
@@ -84,6 +96,8 @@ import {
   repairPythonRunContextHelperFallbackSurface,
   repairPythonRunResultArtifactAggregationSurface,
   repairPythonLockedConditionSeedMatrixEntrypointSurface,
+  repairPythonWorkflowSingleRunExecutorCandidateSurface,
+  repairPythonWorkflowConditionRowsFromPlannedRunsSurface,
   repairPythonSingleConditionExecutorBridgeSurface,
   repairPythonStudyRuntimeHelperAliasSurface,
   repairPythonTerminalMetricsExistingConditionCountSurface,
@@ -759,15 +773,14 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         }
 
         let metricsExists = await fileExists(resolved.metricsPath);
-        if (!metricsExists) {
-          const recoveredPublicMetricsPath = await recoverPublicBundleMetricsOutput({
-            runContext,
-            workspaceRoot: process.cwd(),
-            metricsPath: resolved.metricsPath
-          });
-          if (recoveredPublicMetricsPath) {
-            metricsExists = true;
-            deps.eventStream.emit({
+        const recoveredPublicMetricsPath = await recoverPublicBundleMetricsOutput({
+          runContext,
+          workspaceRoot: process.cwd(),
+          metricsPath: resolved.metricsPath
+        });
+        if (recoveredPublicMetricsPath) {
+          metricsExists = true;
+          deps.eventStream.emit({
               type: "OBS_RECEIVED",
               runId: run.id,
               node: "run_experiments",
@@ -775,9 +788,8 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
               payload: {
                 text: `Recovered required metrics output from public bundle metrics at ${recoveredPublicMetricsPath}.`
               }
-            });
-            await runContext.put("run_experiments.recovered_public_metrics_path", recoveredPublicMetricsPath);
-          }
+          });
+          await runContext.put("run_experiments.recovered_public_metrics_path", recoveredPublicMetricsPath);
         }
         if (!metricsExists) {
           const missingMessage = `Experiment finished without metrics output at ${resolved.metricsPath}`;
@@ -1146,6 +1158,24 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           eventStream: deps.eventStream,
           node: "run_experiments"
         }));
+      const publicMetricPromotion = await promoteObjectiveMetricFromPublicBundle({
+        metrics: parsedMetrics,
+        objectiveProfile,
+        runContext,
+        workspaceRoot: process.cwd(),
+        metricsPath: resolved.metricsPath
+      });
+      if (publicMetricPromotion) {
+        deps.eventStream.emit({
+          type: "OBS_RECEIVED",
+          runId: run.id,
+          node: "run_experiments",
+          agentRole: "runner",
+          payload: {
+            text: publicMetricPromotion
+          }
+        });
+      }
       const objectiveEvaluation = evaluateObjectiveMetric(
         parsedMetrics,
         objectiveProfile,
@@ -2586,14 +2616,79 @@ function emitSupplementalObservation(
   });
 }
 
+async function promoteObjectiveMetricFromPublicBundle(input: {
+  metrics: Record<string, unknown>;
+  objectiveProfile: ObjectiveMetricProfile;
+  runContext: RunContextMemory;
+  workspaceRoot: string;
+  metricsPath: string;
+}): Promise<string | undefined> {
+  const preferredKeys = [...new Set([
+    ...input.objectiveProfile.preferredMetricKeys,
+    ...(input.objectiveProfile.primaryMetric ? [input.objectiveProfile.primaryMetric] : [])
+  ])].filter((key) => /^[A-Za-z_][A-Za-z0-9_]*$/u.test(key));
+  if (preferredKeys.some((key) => asNumber(input.metrics[key]) !== undefined)) {
+    return undefined;
+  }
+  const publicDir = resolveMaybeRelative(
+    await input.runContext.get<string>("implement_experiments.public_dir"),
+    input.workspaceRoot
+  );
+  if (!publicDir) {
+    return undefined;
+  }
+  const candidates = [
+    path.join(publicDir, "metrics.json"),
+    path.join(publicDir, "latest_metrics.json"),
+    path.join(publicDir, "metrics_summary.json")
+  ];
+  for (const candidate of candidates) {
+    if (candidate === input.metricsPath || !(await fileExists(candidate))) {
+      continue;
+    }
+    const candidateMetrics = await readMetricsObject(candidate, input.workspaceRoot);
+    if (!candidateMetrics) {
+      continue;
+    }
+    promoteSummaryPrimaryMetric(candidateMetrics);
+    const matchedKey = preferredKeys.find((key) => asNumber(candidateMetrics[key]) !== undefined);
+    if (!matchedKey) {
+      continue;
+    }
+    for (const key of preferredKeys) {
+      const value = asNumber(candidateMetrics[key]);
+      if (value !== undefined && asNumber(input.metrics[key]) === undefined) {
+        input.metrics[key] = value;
+      }
+    }
+    for (const key of [
+      "primary_metric_key",
+      "primary_metric_value",
+      "primary_metric",
+      "completed_run_count",
+      "completed_condition_count",
+      "failed_run_count",
+      "required_run_count",
+      "required_condition_count",
+      "baseline_condition_marker",
+      "best_condition",
+      "condition_summaries"
+    ]) {
+      if (input.metrics[key] == null && candidateMetrics[key] != null) {
+        input.metrics[key] = candidateMetrics[key];
+      }
+    }
+    return `Promoted objective metric ${matchedKey}=${candidateMetrics[matchedKey]} from public bundle metrics at ${candidate}.`;
+  }
+  return undefined;
+}
+
 async function recoverPublicBundleMetricsOutput(input: {
   runContext: RunContextMemory;
   workspaceRoot: string;
   metricsPath: string;
 }): Promise<string | undefined> {
-  if (await fileExists(input.metricsPath)) {
-    return undefined;
-  }
+  const existingMetrics = await readMetricsObject(input.metricsPath, input.workspaceRoot);
   const publicDir = resolveMaybeRelative(
     await input.runContext.get<string>("implement_experiments.public_dir"),
     input.workspaceRoot
@@ -2613,6 +2708,14 @@ async function recoverPublicBundleMetricsOutput(input: {
     const metrics = await readMetricsObject(candidate, input.workspaceRoot);
     if (!metrics || Object.keys(metrics).length === 0) {
       continue;
+    }
+    if (existingMetrics) {
+      const publicPrimaryKey = asString(metrics.primary_metric_key);
+      const publicHasPrimaryValue = Boolean(publicPrimaryKey && asNumber(metrics[publicPrimaryKey]) !== undefined);
+      const existingHasPrimaryValue = Boolean(publicPrimaryKey && asNumber(existingMetrics[publicPrimaryKey]) !== undefined);
+      if (!publicHasPrimaryValue || existingHasPrimaryValue) {
+        continue;
+      }
     }
     await fs.mkdir(path.dirname(input.metricsPath), { recursive: true });
     await fs.copyFile(candidate, input.metricsPath);
@@ -2903,6 +3006,127 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
       ) || `Added public study top-level runner alias in ${path.basename(scriptPath)} before run_experiments execution.`
     );
   }
+  const selectedRunnerArgvDispatchRepair =
+    await repairPythonSelectedRunnerArgvDispatchSurface(scriptPath);
+  if (selectedRunnerArgvDispatchRepair.repaired) {
+    repaired = true;
+    messages.push(
+      selectedRunnerArgvDispatchRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Preferred raw argv dispatch for selected CLI runners in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+  const studyOrchestratorResolverPerRunFilterRepair =
+    await repairPythonStudyOrchestratorResolverPerRunFilterSurface(scriptPath);
+  if (studyOrchestratorResolverPerRunFilterRepair.repaired) {
+    repaired = true;
+    messages.push(
+      studyOrchestratorResolverPerRunFilterRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Filtered per-run helpers from study orchestrator resolution in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+  const studyOrchestratorOrderedPlanArgumentRepair =
+    await repairPythonStudyOrchestratorOrderedPlanArgumentSurface(scriptPath);
+  if (studyOrchestratorOrderedPlanArgumentRepair.repaired) {
+    repaired = true;
+    messages.push(
+      studyOrchestratorOrderedPlanArgumentRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Materialized ordered-plan arguments for study orchestrator dispatch in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+  const singleCellExecutorRuntimeKwargsRepair =
+    await repairPythonSingleCellExecutorRuntimeKwargsSurface(scriptPath);
+  if (singleCellExecutorRuntimeKwargsRepair.repaired) {
+    repaired = true;
+    messages.push(
+      singleCellExecutorRuntimeKwargsRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Accepted runtime kwargs in single-cell executor bridge for ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+  const loopRunRecordRawResultMetricProjectionRepair =
+    await repairPythonLoopRunRecordRawResultMetricProjectionSurface(scriptPath);
+  if (loopRunRecordRawResultMetricProjectionRepair.repaired) {
+    repaired = true;
+    messages.push(
+      loopRunRecordRawResultMetricProjectionRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Projected nested raw-result metrics into loop run records for ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+  const evaluationSummaryObservedAverageRepair =
+    await repairPythonEvaluationSummaryObservedAverageSurface(scriptPath);
+  if (evaluationSummaryObservedAverageRepair.repaired) {
+    repaired = true;
+    messages.push(
+      evaluationSummaryObservedAverageRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Allowed observed average accuracy in evaluation summaries for ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+  const observedAverageAccuracyAliasRepair =
+    await repairPythonObservedAverageAccuracyAliasSurface(scriptPath);
+  if (observedAverageAccuracyAliasRepair.repaired) {
+    repaired = true;
+    messages.push(
+      observedAverageAccuracyAliasRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Aliased observed average accuracy into primary average accuracy in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+  const singleCellResolverAvoidSelfRepair =
+    await repairPythonSingleCellResolverAvoidSelfSurface(scriptPath);
+  if (singleCellResolverAvoidSelfRepair.repaired) {
+    repaired = true;
+    messages.push(
+      singleCellResolverAvoidSelfRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Prevented single-cell executor resolver from selecting its planned-cell wrapper in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+  const singleRunExecutionBridgeRepair =
+    await repairPythonSingleRunExecutionBridgeSurface(scriptPath);
+  if (singleRunExecutionBridgeRepair.repaired) {
+    repaired = true;
+    messages.push(
+      singleRunExecutionBridgeRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Bridged single-run execution helpers in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+  const supportedKwargsSemanticAliasRepair =
+    await repairPythonSupportedKwargsSemanticAliasSurface(scriptPath);
+  if (supportedKwargsSemanticAliasRepair.repaired) {
+    repaired = true;
+    messages.push(
+      supportedKwargsSemanticAliasRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Added semantic kwargs aliases in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+  const failureEvidenceNonRecursiveRepair =
+    await repairPythonFailureEvidenceNonRecursiveSurface(scriptPath);
+  if (failureEvidenceNonRecursiveRepair.repaired) {
+    repaired = true;
+    messages.push(
+      failureEvidenceNonRecursiveRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Bounded recursive failure evidence capture in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
   const highLevelWorkloadContextAliasRepair =
     await repairPythonHighLevelWorkloadContextAliasSurface(scriptPath);
   if (highLevelWorkloadContextAliasRepair.repaired) {
@@ -2936,6 +3160,28 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
   if (singleConditionExecutorBridgeRepair.repaired) {
     repaired = true;
     messages.push(singleConditionExecutorBridgeRepair.message || `Bridged generated single-condition executor resolution in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+  const workflowSingleRunExecutorCandidateRepair =
+    await repairPythonWorkflowSingleRunExecutorCandidateSurface(scriptPath);
+  if (workflowSingleRunExecutorCandidateRepair.repaired) {
+    repaired = true;
+    messages.push(
+      workflowSingleRunExecutorCandidateRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Added generated single-run executor candidates to workflow fallback resolution in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+  const workflowConditionRowsFromPlannedRunsRepair =
+    await repairPythonWorkflowConditionRowsFromPlannedRunsSurface(scriptPath);
+  if (workflowConditionRowsFromPlannedRunsRepair.repaired) {
+    repaired = true;
+    messages.push(
+      workflowConditionRowsFromPlannedRunsRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Derived condition summaries from planned run rows in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
   }
   const parameterSummaryRecordRepair =
     await repairPythonParameterSummaryRecordSurface(scriptPath);

@@ -196,8 +196,8 @@ describe("briefEvidenceValidator", () => {
         metrics: {
           conditions: [
             { name: "base_unmodified" },
-            { name: "adapter_r8" },
-            { name: "adapter_r16" }
+            { name: "candidate_condition_a" },
+            { name: "candidate_condition_b" }
           ]
         }
       })

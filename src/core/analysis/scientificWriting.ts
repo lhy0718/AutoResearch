@@ -3829,7 +3829,7 @@ function inferDatasetScopeNearNumber(
   }
   const searchText = normalizeMetricSearchText(text);
   const arcDistance = nearestKeywordDistance(searchText, rawIndex, ["benchmark task a", "benchmark_task_a"]);
-  const benchmark_task_bDistance = nearestKeywordDistance(searchText, rawIndex, ["benchmark_task_b", "hella swag"]);
+  const benchmark_task_bDistance = nearestKeywordDistance(searchText, rawIndex, ["benchmark_task_b"]);
   if (typeof arcDistance === "number" || typeof benchmark_task_bDistance === "number") {
     if (typeof arcDistance !== "number") {
       return "Benchmark Task B";
@@ -4641,7 +4641,7 @@ function extractConditionTargetFromText(text: string): string | undefined {
 }
 
 function shouldPreferAnaphoricConditionTarget(fragment: string, rawIndex: number, currentTarget: string): boolean {
-  if (!/^rank_\d+(?:_\d+)?_dropout_/u.test(currentTarget)) {
+  if (!/^condition_\d+(?:_\d+)?_parameter_/u.test(currentTarget)) {
     return false;
   }
   const suffix = fragment.slice(Math.max(0, rawIndex));
@@ -4692,7 +4692,7 @@ function formatConditionComparisonTarget(rank: string, dropout: string): string 
   if (!Number.isFinite(rankValue) || !Number.isFinite(dropoutValue)) {
     return undefined;
   }
-  return `rank_${formatConditionTargetNumber(rankValue)}_dropout_${formatConditionTargetNumber(dropoutValue)}`;
+  return `condition_${formatConditionTargetNumber(rankValue)}_parameter_${formatConditionTargetNumber(dropoutValue)}`;
 }
 
 function formatConditionTargetNumber(value: number): string {
@@ -6592,23 +6592,23 @@ function compactMethodProtocolParagraphs(paragraphs: string[]): string[] {
 
 function removeDuplicateEffectComparisonParagraphs(paragraphs: string[]): string[] {
   const compact: string[] = [];
-  let hasRank32Effect = false;
+  let hasSpecificEffect = false;
   for (const paragraph of paragraphs) {
     const cleaned = sanitizeHumanFacingManuscriptText(paragraph);
     if (!cleaned) {
       continue;
     }
-    const isRank32Effect =
-      /\brank\s*32\b.*\bdropout\s*0(?:\.| )?05\b.*\b(?:0\.0667|0\.0833)\b/iu.test(cleaned)
-      || /\b(?:0\.0667|0\.0833)\b.*\brank\s*32\b.*\bdropout\s*0(?:\.| )?05\b/iu.test(cleaned);
+    const isSpecificEffect =
+      /\bleading observed condition\b[^.!?]{0,180}\b(?:0\.0667|0\.0833)\b/iu.test(cleaned)
+      || /\b(?:0\.0667|0\.0833)\b[^.!?]{0,180}\bleading observed condition\b/iu.test(cleaned);
     const isBareMetricRestatement =
       /\baccuracy[_ ]delta[_ ]vs[_ ]baseline\b/iu.test(cleaned) && /\b(?:0\.0667|0\.0833)\b/iu.test(cleaned);
-    if ((isRank32Effect || isBareMetricRestatement) && hasRank32Effect) {
+    if ((isSpecificEffect || isBareMetricRestatement) && hasSpecificEffect) {
       continue;
     }
     compact.push(cleaned);
-    if (isRank32Effect || isBareMetricRestatement) {
-      hasRank32Effect = true;
+    if (isSpecificEffect || isBareMetricRestatement) {
+      hasSpecificEffect = true;
     }
   }
   return compact;
@@ -6989,11 +6989,11 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
       "Brief execution-coverage and supplementary-metric summaries are kept secondary, and the main text carries the central interpretation only where execution coverage is visible in the presented evidence."
     )
     .replace(
-      /\bPreprocessing follows this order:\s*.*?\bArtifact text references (?:imput|scale)\.?.*?\bModel selection and reporting focus on average_accuracy\s*=\s*unweighted mean of Benchmark Task A accuracy and Benchmark Task B accuracy,?\s*accuracy_delta_vs_locked_baseline\s*=\s*cell mean average_accuracy minus mean average_accuracy of rank=8, dropout=0\.0 over the same seed set,?\s*benchmark_task_a_accuracy and benchmark_task_b_accuracy per run and per cell mean,?\s*and seed_std_average_accuracy across seeds \[42,43,44,45,46\] for each repeated cell\./giu,
+      /\bPreprocessing follows this order:\s*.*?\bArtifact text references (?:imput|scale)\.?.*?\bModel selection and reporting focus on average_accuracy\s*=\s*unweighted mean of Benchmark Task A accuracy and Benchmark Task B accuracy,?\s*accuracy_delta_vs_locked_baseline\s*=\s*cell mean average_accuracy minus mean average_accuracy of the locked baseline condition over the same seed set,?\s*benchmark_task_a_accuracy and benchmark_task_b_accuracy per run and per cell mean,?\s*and seed_std_average_accuracy across the repeated seed set for each repeated cell\./giu,
       "Preprocessing and reporting held optimizer settings, adapter target modules, data cap, effective batch size, and evaluation tasks fixed across cells. The reported metrics are average accuracy, delta versus the locked baseline condition, task-level accuracies, and seed-level dispersion for each repeated cell."
     )
     .replace(
-      /\bThe protocol records Execute 25 train-plus-eval runs total:\s*5 repeated cells x 5 seeds where repeated cells are baseline rank8-drop0\.0, rank16-drop0\.0, rank16-drop0\.05, rank32-drop0\.0, rank32-drop0\.05\.,?\s*For each repeated cell, compute mean average_accuracy, seed standard deviation, and bootstrap 95 percent CI width; report per-task means and deltas as separate columns\.,?\s*Separately flag whether any repeated cell clears accuracy_delta_vs_locked_baseline >= 0\.01 and whether its 95 percent CI does not clearly contradict the improvement direction\.,?\s*and Apply the no-signal rule if the maximum mean average_accuracy spread across the repeated cells is below 0\.005 or if the bootstrap intervals make the comparisons directionally inconclusive\. Runtime and memory are explicitly measured in the evaluation outputs\./giu,
+      /\bThe protocol records Execute \d+ train-plus-eval runs total:\s*\d+ repeated cells x \d+ seeds where repeated cells are [^.]+\.?,?\s*For each repeated cell, compute mean average_accuracy, seed standard deviation, and bootstrap 95 percent CI width; report per-task means and deltas as separate columns\.,?\s*Separately flag whether any repeated cell clears accuracy_delta_vs_locked_baseline >= [0-9.]+ and whether its 95 percent CI does not clearly contradict the improvement direction\.,?\s*and Apply the no-signal rule if the maximum mean average_accuracy spread across the repeated cells is below [0-9.]+ or if the bootstrap intervals make the comparisons directionally inconclusive\. Runtime and memory are explicitly measured in the evaluation outputs\./giu,
       "The executed protocol comprised the scheduled train-plus-evaluate runs across repeated condition cells and recorded seed coverage. The analysis reports per-cell mean accuracy, seed dispersion, bootstrap interval width, task-level means, completion status, and secondary runtime and memory diagnostics where those quantities are available."
     )
     .replace(
@@ -7224,7 +7224,7 @@ function describeScientificObjectiveForNarrative(value: string | undefined): str
   if (!cleaned || isBibliographicSpilloverText(cleaned)) {
     return "the stated empirical objective";
   }
-  if (/accuracy|arc|benchmark_task_b|baseline|delta/iu.test(cleaned)) {
+  if (/accuracy|benchmark_task_a|benchmark_task_b|baseline|delta/iu.test(cleaned)) {
     return "baseline-relative task accuracy under the declared local budget";
   }
   if (/f1|classification|logreg|tree|tabular/iu.test(cleaned)) {
@@ -7236,7 +7236,7 @@ function describeScientificObjectiveForNarrative(value: string | undefined): str
 function rewriteReaderFacingProvenancePhrases(value: string): string {
   return value
     .replace(
-      /\bThe executed and analyzed run set contained three trials rather than the full eight-condition factorial grid\.\s*Within that limited coverage,\s*the strongest reported comparison was between the baseline condition,\s*baseline condition with dropout 0\.0,\s*and a higher-capacity regularized condition,\s*candidate condition b with dropout 0\.05\./giu,
+      /\bThe executed and analyzed run set contained three trials rather than the full planned condition grid\.\s*Within that limited coverage,\s*the strongest reported comparison was between the baseline condition,\s*the locked baseline cell,\s*and a higher-capacity regularized candidate cell\./giu,
       "The reported condition summaries preserve the locked baseline and evaluated condition-parameter alternatives as the comparison grid. Within that local pilot, the strongest reported comparison was between the baseline condition, the locked baseline, and a higher-capacity regularized condition, the leading observed condition."
     )
     .replace(
@@ -7252,7 +7252,7 @@ function rewriteReaderFacingProvenancePhrases(value: string): string {
       "The evidence remains a single local pilot without repeated-seed replication, and the reported materials indicate unresolved consistency limits around uncertainty handling."
     )
     .replace(
-      /\bAmong the three analyzed trials,\s*only candidate condition b with dropout 0\.05 exceeded the baseline;\s*the other analyzed non-baseline condition did not\./giu,
+      /\bAmong the three analyzed trials,\s*only the strongest candidate cell exceeded the baseline;\s*the other analyzed non-baseline condition did not\./giu,
       "Among the reported condition summaries, the leading observed condition supplies the strongest baseline-relative gain."
     )
     .replace(
@@ -8882,7 +8882,7 @@ function collectDatasetSourceHints(parsedPlan: Record<string, unknown>, latestRe
       "public benchmark",
       "benchmark suite",
       "alpaca",
-      "arc-challenge",
+      "benchmark task a",
       "benchmark_task_b"
     ]),
     asString(protocol.dataset_source) || ""

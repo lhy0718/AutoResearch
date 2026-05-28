@@ -2993,11 +2993,33 @@ function buildSupplementalRunSummary(
 }
 
 function computeMeanScore(metrics: Record<string, unknown>): number {
-  const values = Object.values(metrics).filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const values = flattenNumericMetrics(metrics)
+    .filter((entry) => isMeanScoreMetric(entry.key, entry.value))
+    .map((entry) => entry.value);
   if (values.length === 0) {
     return 0;
   }
   return Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(4));
+}
+
+function isMeanScoreMetric(key: string, value: number): boolean {
+  if (!Number.isFinite(value)) {
+    return false;
+  }
+  const normalized = key.toLocaleLowerCase();
+  if (
+    /(?:^|[._-])(?:memory|bytes|byte|vram|ram|allocated|reserved|runtime|latency|duration|seconds|wall_clock|time|timestamp|started|finished|elapsed|count|total|planned|completed|failed|seed|rank|dropout|example|sample|step|epoch|token|parameter|index|order|trial)(?:[._-]|$)/u.test(
+      normalized
+    )
+  ) {
+    return false;
+  }
+  if (/(?:^|[._-])(?:loss|perplexity)(?:[._-]|$)/u.test(normalized)) {
+    return false;
+  }
+  return /(?:^|[._-])(?:accuracy|acc|f1|precision|recall|bleu|rouge|auc|score|delta|improvement|pass@\d+)(?:[._-]|$)/u.test(
+    normalized
+  );
 }
 
 function flattenNumericMetrics(

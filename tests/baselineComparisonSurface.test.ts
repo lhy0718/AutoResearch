@@ -12,13 +12,13 @@ function makeReport() {
     metrics: {
       result_rows: [
         {
-          condition_id: "locked_adapter_baseline_r8",
+          condition_id: "locked_baseline_condition",
           recipe_type: "locked_baseline",
           is_locked_adapter_baseline: true,
           mean_zero_shot_accuracy: 0.3044
         },
         {
-          condition_id: "adapter_r16_attention_mlp",
+          condition_id: "candidate_condition_b",
           recipe_type: "candidate",
           mean_zero_shot_accuracy: 0.3135
         }
@@ -76,7 +76,7 @@ describe("baselineComparisonSurface", () => {
 
     expect(surface.status).toBe("available");
     expect(surface.primary_comparison).toMatchObject({
-      id: "adapter_r16_attention_mlp_vs_locked_adapter_baseline_r8",
+      id: "candidate_condition_b_vs_locked_baseline_condition",
       source: "metrics.result_rows"
     });
     expect(surface.primary_comparison?.metrics).toEqual([

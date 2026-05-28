@@ -5643,7 +5643,7 @@ def build_paired_accuracy_rows(bars):
         if not match:
             return None
         series = match.group(1).lower()
-        metric = match.group(2).strip().replace("ARC Challenge", "Benchmark Task A")
+        metric = match.group(2).strip()
         if metric not in grouped:
             grouped[metric] = {}
             order.append(metric)

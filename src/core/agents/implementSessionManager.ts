@@ -219,6 +219,9 @@ const IMPLEMENT_UNIT_CHUNK_PROMPT_DIR = path.join("implement_experiments", "unit
 const IMPLEMENT_UNIT_CHUNK_RESPONSE_DIR = path.join("implement_experiments", "unit_chunk_responses");
 const MAX_DYNAMIC_CHUNK_SUBDIVISION_DEPTH = 3;
 const NON_RESTORABLE_RUN_DIR_ENTRIES = new Set([
+  "analysis_cache",
+  "checkpoints",
+  "exec_logs",
   "implement_experiments",
   "memory",
   "implement_attempts.json",
@@ -2441,7 +2444,7 @@ export class ImplementSessionManager {
         "Planned condition contract:",
         JSON.stringify(sandboxTaskSpec.context.planned_condition_contract, null, 2),
         "",
-        "Preserve every planned condition marker in the implementation and metrics; do not collapse rank_stabilized_adapter/decomposed_adapter or other named recipe families into generic adapter rank variants.",
+        "Preserve every planned condition marker in the implementation and metrics; do not collapse named recipe families into generic adapter variants.",
         "If this contract includes required_run_count, seed_schedule, or minimum_seeds_per_condition, those repeated-run requirements override any smaller pilot shape implied by a comparison contract or previous script.",
         "Do not compress repeated cells into one condition-parameter grid marker; materialize per-cell/per-seed execution and aggregate only after raw rows are written.",
         "When the contract names a baseline-relative primary metric, write both primary_metric.name/value and the same top-level metric key in metrics.json, computed from executed baseline/comparator outputs only."
@@ -9533,6 +9536,10 @@ export class ImplementSessionManager {
       await repairPythonNeftuneEmbeddingForwardHookSurface(executionScriptPath);
     const supportedSignatureKwargAliasRepair =
       await repairPythonSupportedSignatureKwargAliasSurface(executionScriptPath);
+    const supportedKwargsSemanticAliasRepair =
+      await repairPythonSupportedKwargsSemanticAliasSurface(executionScriptPath);
+    const flexibleInvocationPlannedRunAliasRepair =
+      await repairPythonFlexibleInvocationPlannedRunAliasSurface(executionScriptPath);
     const transformersLinearSchedulerRepair =
       await repairPythonTransformersLinearSchedulerSurface(executionScriptPath);
     const lockedConditionContractCallRepair =
@@ -9763,6 +9770,8 @@ export class ImplementSessionManager {
       deviceHelperAliasRepair,
       neftuneEmbeddingHookRepair,
       supportedSignatureKwargAliasRepair,
+      supportedKwargsSemanticAliasRepair,
+      flexibleInvocationPlannedRunAliasRepair,
       transformersLinearSchedulerRepair,
       lockedConditionContractCallRepair,
       entrypointConditionRunnerResolverRepair,
@@ -12982,7 +12991,7 @@ function parseDropoutNumber(value: string): number | undefined {
 }
 
 function rankDropoutMarker(rank: number, dropout: number): string {
-  return `rank_${rank}_dropout_${formatDropoutMarkerToken(dropout)}`;
+  return `condition_${rank}_parameter_${formatDropoutMarkerToken(dropout)}`;
 }
 
 function formatDropoutMarkerToken(value: number): string {
@@ -13000,7 +13009,7 @@ function rankDropoutMarkerSort(left: string, right: string): number {
 }
 
 function parseRankDropoutMarkerForSort(marker: string): { rank: number; dropout: number } {
-  const match = marker.match(/^rank_(\d+)_dropout_([0-9_]+)$/u);
+  const match = marker.match(/^condition_(\d+)_parameter_([0-9_]+)$/u);
   return {
     rank: match ? Number.parseInt(match[1] || "0", 10) : 0,
     dropout: match ? parseDropoutNumber(match[2] || "0") || 0 : 0
@@ -13812,7 +13821,7 @@ async function recoverStructuredResultFromPublicBundle(params: {
     if (!hasSubstantiveMaterializedContent(scriptContent, scriptPath)) {
       continue;
     }
-    if (await recoveredBundleHasUnfilledAutolabosSections(candidate.dir)) {
+    if (!deterministicRepairFeedback && await recoveredBundleHasUnfilledAutolabosSections(candidate.dir)) {
       continue;
     }
     if (candidate.snapshot) {
@@ -13871,6 +13880,9 @@ async function recoverStructuredResultFromPublicBundle(params: {
       ) {
         continue;
       }
+    }
+    if (await detectPythonUnfilledAutolabosSections(scriptPath)) {
+      continue;
     }
   const readmePath = path.join(params.publicDir, "README.md");
   const frozenConfigPath = path.join(params.publicDir, "frozen_config.json");
@@ -14117,12 +14129,15 @@ async function applyRecoverableBundleDeterministicRepairs(params: {
     await repairPythonDataclassTrainingExampleCoercionSurface(params.scriptPath),
     await repairPythonConditionSuccessStatusAliasSurface(params.scriptPath),
     await repairPythonMetricsPayloadProjectionSurface(params.scriptPath),
+    await repairPythonRequiredContractGlobalAliasSurface(params.scriptPath),
+    await repairPythonSectionedRunnerCliEntrypointSurface(params.scriptPath),
     await repairPythonFinalOrchestrationHelperSurface(params.scriptPath),
     await repairPythonKeywordOnlyDefaultCallSurface(
       params.scriptPath,
       params.runnerFeedback,
       params.runnerFeedbackDiagnosticText
     ),
+    await repairPythonFlexibleInvocationPlannedRunAliasSurface(params.scriptPath),
     await repairPythonUnexpectedKeywordParameterSurface(
       params.scriptPath,
       params.runnerFeedback,
@@ -14813,6 +14828,8 @@ function isRecoverableBundleDeterministicRepairFeedback(
     /AttributeError:\s*['"][^'"]+['"] object has no attribute ['"]get['"]/u.test(summary) ||
     /status=failed; completed=0\/\d+; baseline_first=True/u.test(summary) ||
     /Experiment metrics payload reports success=false/u.test(summary) ||
+    /KeyError:\s*['"]planned_run['"]/u.test(summary) ||
+    /Unable to resolve required callable from candidates/u.test(summary) ||
     /AUTOLABOS SECTION skeleton markers|Unfilled or unstripped section marker|Final experiment scripts must contain executable code/iu.test(summary) ||
     /Unable to locate (?:a |the )study (?:runner|execution) function/u.test(summary) ||
     /Unable to locate the experiment sweep runner callable/u.test(summary)
@@ -14827,8 +14844,11 @@ function hasRecoverableBundleDeterministicRepairMarker(source: string): boolean 
     "_autolabos_condition_success_status_alias_marker",
     "_autolabos_entrypoint_locked_condition_seed_sweep_candidate_marker",
     "_autolabos_final_orchestration_helper_marker",
+    "_autolabos_sectioned_runner_cli_entrypoint_marker",
+    "_autolabos_required_contract_global_alias_marker",
     "_autolabos_keyword_only_default_call_marker",
     "_autolabos_unexpected_keyword_parameter_marker",
+    "_autolabos_flexible_invocation_planned_run_alias_marker",
     "_autolabos_skip_callable_classes_marker"
   ].some((marker) => source.includes(marker));
 }
@@ -15400,15 +15420,54 @@ const ATTEMPT_SNAPSHOT_IGNORED_DIR_NAMES = new Set([
   ".mypy_cache",
   ".pytest_cache",
   "__pycache__",
+  "adapters",
+  "artifacts",
   "cache",
+  "checkpoints",
+  "condition_artifacts",
+  "condition_outputs",
+  "condition_runs",
+  "conditions",
+  "evaluation_artifacts",
+  "evaluations",
   "hf_home",
   "hf_cache",
-  "node_modules"
+  "logs",
+  "model_artifacts",
+  "node_modules",
+  "page_images",
+  "pdfs",
+  "planned_runs",
+  "results",
+  "run_artifacts",
+  "scratch",
+  "study_outputs",
+  "study_runs",
+  "tokenizer",
+  "training_artifacts",
+  "training_outputs",
+  "training_runs"
+]);
+
+const ATTEMPT_SNAPSHOT_IGNORED_FILE_EXTENSIONS = new Set([
+  ".bin",
+  ".ckpt",
+  ".gguf",
+  ".onnx",
+  ".pt",
+  ".pth",
+  ".safetensors"
 ]);
 
 export function shouldSkipAttemptSnapshotPath(filePath: string): boolean {
+  if (ATTEMPT_SNAPSHOT_IGNORED_FILE_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
+    return true;
+  }
   const segments = filePath.split(/[\\/]+/u).filter(Boolean).map((segment) => segment.toLowerCase());
   return segments.some((segment, index) => {
+    if (/^seed[_-]?\d+$/u.test(segment)) {
+      return true;
+    }
     if (ATTEMPT_SNAPSHOT_IGNORED_DIR_NAMES.has(segment)) {
       return true;
     }
@@ -21288,6 +21347,41 @@ export async function repairPythonConditionTrainEvalHelperBridgeSurface(
     "    train_and_evaluate_condition = run_condition_experiment",
     "if \"execute_training_condition\" not in globals():",
     "    execute_training_condition = run_condition_experiment",
+    "",
+    "def _autolabos_run_single_planned_condition(planned_run=None, condition=None, condition_spec=None, spec=None, args=None, runtime_context=None, run_context=None, **kwargs):",
+    "    active_context = runtime_context if runtime_context is not None else run_context",
+    "    runtime = _autolabos_runtime_mapping_from_context(active_context)",
+    "    if args is not None:",
+    "        runtime.update(_autolabos_runtime_mapping_from_context(args))",
+    "    planned = planned_run if planned_run is not None else kwargs.get(\"planned_run\")",
+    "    active_spec = condition if condition is not None else condition_spec if condition_spec is not None else spec",
+    "    baseline_flag = False",
+    "    if isinstance(planned, Mapping):",
+    "        for key in (\"condition\", \"condition_spec\", \"spec\", \"condition_record\", \"condition_config\"):",
+    "            if active_spec is None and planned.get(key) is not None:",
+    "                active_spec = planned.get(key)",
+    "        for key in (\"seed\", \"condition_seed\", \"run_seed\", \"output_dir\", \"metrics_path\", \"public_experiment_dir\", \"artifacts_dir\", \"training_runs_dir\"):",
+    "            if planned.get(key) is not None:",
+    "                runtime[str(key)] = planned.get(key)",
+    "        baseline_flag = bool(planned.get(\"is_baseline\") or planned.get(\"baseline\") or str(planned.get(\"role\", \"\")).lower() == \"baseline\")",
+    "    if active_spec is None:",
+    "        active_spec = planned",
+    "    marker = _autolabos_condition_marker_for_bridge(active_spec, \"condition\")",
+    "    baseline_marker = globals().get(\"BASELINE_CONDITION_MARKER\") or globals().get(\"BASELINE_MARKER\")",
+    "    if baseline_marker is not None and marker == str(baseline_marker):",
+    "        baseline_flag = True",
+    "    if baseline_flag:",
+    "        return run_baseline_condition(run_context=runtime, condition=active_spec, **kwargs)",
+    "    return run_condition_experiment(run_context=runtime, condition=active_spec, **kwargs)",
+    "",
+    "if \"execute_single_planned_run\" not in globals():",
+    "    execute_single_planned_run = _autolabos_run_single_planned_condition",
+    "if \"run_single_planned_run\" not in globals():",
+    "    run_single_planned_run = _autolabos_run_single_planned_condition",
+    "if \"execute_planned_run\" not in globals():",
+    "    execute_planned_run = _autolabos_run_single_planned_condition",
+    "if \"run_condition_seed\" not in globals():",
+    "    run_condition_seed = _autolabos_run_single_planned_condition",
     ""
   ].join("\n");
 
@@ -28517,7 +28611,7 @@ export async function repairPythonChunk3bStudyRunnerInvocationContextSurface(
   if (
     source.includes(marker) ||
     !source.includes("def _chunk3b_invoke_runner(") ||
-    !source.includes("def run_rank_dropout_study(") ||
+    !source.includes("def run_condition_parameter_study(") ||
     !source.includes("selected_conditions") ||
     !source.includes("run_condition_fn") ||
     !source.includes("'selected_condition_markers': run_config.get('condition_markers')")
@@ -29720,6 +29814,226 @@ export async function repairPythonMainFindCallableStudyResolverSurface(
   };
 }
 
+
+
+export async function repairPythonRequiredContractGlobalAliasSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_required_contract_global_alias_marker";
+  if (source.includes(marker) || !source.includes("def _resolve_required_global(")) {
+    return { repaired: false };
+  }
+
+  let nextSource = source;
+  let repaired = false;
+  if (
+    /(^|\n)TUNED_ONLY_CONDITIONS\s*=\s*[^\n]+/u.test(nextSource) &&
+    !/(^|\n)TUNED_ONLY\s*=/u.test(nextSource)
+  ) {
+    nextSource = nextSource.replace(
+      /(^|\n)(TUNED_ONLY_CONDITIONS\s*=\s*[^\n]+)(\n)/u,
+      (_full, prefix: string, assignment: string, suffix: string) => [
+        prefix + assignment,
+        "# _autolabos_required_contract_global_alias_marker",
+        "TUNED_ONLY = TUNED_ONLY_CONDITIONS",
+        "PLANNED_TUNED_ONLY = TUNED_ONLY_CONDITIONS",
+        "CONTRACT_TUNED_ONLY = TUNED_ONLY_CONDITIONS"
+      ].join("\n") + suffix
+    );
+    repaired = true;
+  }
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: "Aliased generated required contract globals in " + path.basename(scriptPath) + " before handoff."
+  };
+}
+
+export async function repairPythonSectionedRunnerCliEntrypointSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_sectioned_runner_cli_entrypoint_marker";
+  if (
+    source.includes(marker) ||
+    !source.includes("AUTOLABOS SECTION") ||
+    !source.includes("def build_locked_study_context(") ||
+    !source.includes("def run_study_and_write_metrics(")
+  ) {
+    return { repaired: false };
+  }
+
+  const hasChunk5Skeleton =
+    /#\s*BEGIN AUTOLABOS SECTION\s+chunk_5a[\s\S]*?#\s*END AUTOLABOS SECTION\s+chunk_5a/u.test(source) ||
+    /#\s*BEGIN AUTOLABOS SECTION\s+chunk_5b[\s\S]*?#\s*END AUTOLABOS SECTION\s+chunk_5b/u.test(source) ||
+    /#\s*BEGIN AUTOLABOS SECTION\s+chunk_5c[\s\S]*?#\s*END AUTOLABOS SECTION\s+chunk_5c/u.test(source);
+  if (!hasChunk5Skeleton) {
+    return { repaired: false };
+  }
+
+  const cliParserBlock = [
+    "def build_arg_parser() -> argparse.ArgumentParser:",
+    "    parser = argparse.ArgumentParser(description='Run the locked AutoLabOS condition-sweep experiment.')",
+    "    parser.add_argument('--metrics-path', type=Path, default=DEFAULT_METRICS_PATH)",
+    "    parser.add_argument('--public-dir', type=Path, default=DEFAULT_PUBLIC_DIR)",
+    "    parser.add_argument('--config', type=Path, default=None)",
+    "    parser.add_argument('--run-dir', type=Path, default=None)",
+    "    parser.add_argument('--output-dir', type=Path, default=None)",
+    "    parser.add_argument('--study-results-path', type=Path, default=None)",
+    "    parser.add_argument('--per-seed-results-path', type=Path, default=None)",
+    "    parser.add_argument('--aggregates-path', type=Path, default=None)",
+    "    parser.add_argument('--training-output-root', type=Path, default=None)",
+    "    parser.add_argument('--timeout-sec', type=int, default=None)",
+    "    return parser",
+    ""
+  ].join("\n");
+
+  const mainBlock = [
+    "def _autolabos_build_context_from_cli_value(value: Any = None, **overrides: Any) -> LockedStudyContext:",
+    "    if isinstance(value, LockedStudyContext):",
+    "        return value",
+    "    source = value if value is not None else argparse.Namespace()",
+    "    public_dir = Path(overrides.get('public_dir') or getattr(source, 'public_dir', DEFAULT_PUBLIC_DIR)).expanduser().resolve()",
+    "    metrics_path = Path(overrides.get('metrics_path') or getattr(source, 'metrics_path', DEFAULT_METRICS_PATH)).expanduser().resolve()",
+    "    study_results_path = overrides.get('study_results_path') or getattr(source, 'study_results_path', None) or public_dir / 'study_results.json'",
+    "    per_seed_results_path = overrides.get('per_seed_results_path') or getattr(source, 'per_seed_results_path', None) or public_dir / 'per_seed_results.json'",
+    "    aggregates_path = overrides.get('aggregates_path') or getattr(source, 'aggregates_path', None) or public_dir / 'aggregate_results.json'",
+    "    training_output_root = overrides.get('training_output_root') or getattr(source, 'training_output_root', None) or public_dir / 'condition_runs'",
+    "    timeout_sec = overrides.get('timeout_sec', getattr(source, 'timeout_sec', None))",
+    "    return build_locked_study_context(",
+    "        metrics_path=Path(metrics_path),",
+    "        public_dir=Path(public_dir),",
+    "        script_path=Path(__file__).resolve(),",
+    "        study_results_path=Path(study_results_path),",
+    "        per_seed_results_path=Path(per_seed_results_path),",
+    "        aggregates_path=Path(aggregates_path),",
+    "        training_output_root=Path(training_output_root),",
+    "        timeout_sec=timeout_sec,",
+    "    )",
+    "",
+    "def execute_experiment_workflow(context: Any = None, **kwargs: Any) -> Dict[str, Any]:",
+    "    # _autolabos_sectioned_runner_cli_entrypoint_marker",
+    "    return run_study_and_write_metrics(_autolabos_build_context_from_cli_value(context, **kwargs))",
+    "",
+    "def run_experiment_workflow(context: Any = None, **kwargs: Any) -> Dict[str, Any]:",
+    "    return execute_experiment_workflow(context, **kwargs)",
+    "",
+    "def execute_study_workflow(context: Any = None, **kwargs: Any) -> Dict[str, Any]:",
+    "    return execute_experiment_workflow(context, **kwargs)",
+    "",
+    "def run_study_workflow(context: Any = None, **kwargs: Any) -> Dict[str, Any]:",
+    "    return execute_experiment_workflow(context, **kwargs)",
+    "",
+    "def execute_experiment(context: Any = None, **kwargs: Any) -> Dict[str, Any]:",
+    "    return execute_experiment_workflow(context, **kwargs)",
+    "",
+    "def run_experiment(context: Any = None, **kwargs: Any) -> Dict[str, Any]:",
+    "    return execute_experiment_workflow(context, **kwargs)",
+    "",
+    "def execute_locked_study(context: Any = None, **kwargs: Any) -> Dict[str, Any]:",
+    "    return execute_experiment_workflow(context, **kwargs)",
+    "",
+    "def run_locked_study(context: Any = None, **kwargs: Any) -> Dict[str, Any]:",
+    "    return execute_experiment_workflow(context, **kwargs)",
+    "",
+    "def orchestrate_locked_study(context: Any = None, **kwargs: Any) -> Dict[str, Any]:",
+    "    return execute_experiment_workflow(context, **kwargs)",
+    "",
+    "def orchestrate_experiment(context: Any = None, **kwargs: Any) -> Dict[str, Any]:",
+    "    return execute_experiment_workflow(context, **kwargs)",
+    "",
+    "def orchestrate_study(context: Any = None, **kwargs: Any) -> Dict[str, Any]:",
+    "    return execute_experiment_workflow(context, **kwargs)",
+    "",
+    "def run_study(context: Any = None, **kwargs: Any) -> Dict[str, Any]:",
+    "    return execute_experiment_workflow(context, **kwargs)",
+    "",
+    "def main(argv: Optional[Sequence[str]] = None) -> int:",
+    "    parser = build_arg_parser()",
+    "    args = parser.parse_args(argv)",
+    "    try:",
+    "        payload = execute_experiment_workflow(args)",
+    "    except Exception as exc:",
+    "        fallback_context = _autolabos_build_context_from_cli_value(args)",
+    "        failure_payload = {",
+    "            'status': 'failed',",
+    "            'success': False,",
+    "            'error_type': type(exc).__name__,",
+    "            'error': str(exc),",
+    "            'traceback': traceback.format_exc(limit=20),",
+    "            'metrics_path': str(fallback_context.metrics_path),",
+    "            'public_experiment_dir': str(fallback_context.public_dir),",
+    "            'run_command': fallback_context.run_command,",
+    "        }",
+    "        _write_json_document(fallback_context.metrics_path, failure_payload)",
+    "        return 1",
+    "    if isinstance(payload, Mapping):",
+    "        status_text = str(payload.get('status', '')).lower()",
+    "        success_value = payload.get('success')",
+    "        if success_value is True or status_text in {'success', 'completed', 'pass', 'passed'}:",
+    "            return 0",
+    "    return 1",
+    ""
+  ].join("\n");
+
+  const bootstrapBlock = [
+    "if __name__ == '__main__':",
+    "    raise SystemExit(main())",
+    ""
+  ].join("\n");
+
+  let nextSource = source;
+  nextSource = nextSource.replace(
+    /#\s*BEGIN AUTOLABOS SECTION\s+chunk_5a[\s\S]*?#\s*END AUTOLABOS SECTION\s+chunk_5a/u,
+    cliParserBlock.trimEnd()
+  );
+  nextSource = nextSource.replace(
+    /#\s*BEGIN AUTOLABOS SECTION\s+chunk_5b[\s\S]*?#\s*END AUTOLABOS SECTION\s+chunk_5b/u,
+    mainBlock.trimEnd()
+  );
+  nextSource = nextSource.replace(
+    /#\s*BEGIN AUTOLABOS SECTION\s+chunk_5c[\s\S]*?#\s*END AUTOLABOS SECTION\s+chunk_5c/u,
+    bootstrapBlock.trimEnd()
+  );
+  nextSource = stripCanonicalSkeletonMarkers(nextSource, scriptPath);
+
+  if (nextSource === source || !nextSource.includes(marker) || nextSource.includes("AUTOLABOS SECTION")) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: "Filled sectioned runner CLI entrypoint and stripped skeleton markers in " + path.basename(scriptPath) + " before handoff."
+  };
+}
+
 export async function repairPythonFinalOrchestrationHelperSurface(
   scriptPath?: string
 ): Promise<{ repaired: boolean; message?: string }> {
@@ -30839,8 +31153,8 @@ export async function repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurfac
     "    \"run_locked_study_sweep\",",
     "    \"run_study_sweep\",",
     "    \"execute_study_sweep\",",
-    "    \"run_rank_dropout_study\",",
-    "    \"execute_rank_dropout_study\",",
+    "    \"run_condition_parameter_study\",",
+    "    \"execute_condition_parameter_study\",",
     "    \"run_study\",",
     "    \"execute_study\",",
     "    \"run_governed_study\",",
@@ -38273,6 +38587,997 @@ export async function repairPythonNamespaceParseArgsSurface(scriptPath?: string)
   };
 }
 
+export async function repairPythonSelectedRunnerArgvDispatchSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    source.includes("_autolabos_selected_runner_argv_dispatch_marker") ||
+    !source.includes("def _invoke_selected_runner(") ||
+    !source.includes("parsed_args is not None") ||
+    !source.includes("return runner(parsed_args)") ||
+    !source.includes("return runner(list(argv))")
+  ) {
+    return { repaired: false };
+  }
+
+  const fallbackNeedle = [
+    "    if parsed_args is not None:",
+    "        return runner(parsed_args)",
+    "    return runner(list(argv))"
+  ].join("\n");
+  if (!source.includes(fallbackNeedle)) {
+    return { repaired: false };
+  }
+
+  const replacement = [
+    "    _autolabos_selected_runner_argv_dispatch_marker = True",
+    "    argv_param_names = {",
+    "        parameter.name.lower()",
+    "        for parameter in signature.parameters.values()",
+    "        if parameter.kind",
+    "        in (",
+    "            inspect.Parameter.POSITIONAL_ONLY,",
+    "            inspect.Parameter.POSITIONAL_OR_KEYWORD,",
+    "            inspect.Parameter.KEYWORD_ONLY,",
+    "        )",
+    "    }",
+    "    if any(\"argv\" in parameter_name for parameter_name in argv_param_names):",
+    "        try:",
+    "            return runner(list(argv))",
+    "        except TypeError:",
+    "            if parsed_args is None or not any(parameter_name in {\"args\", \"parsed_args\", \"namespace\"} for parameter_name in argv_param_names):",
+    "                raise",
+    "",
+    "    if parsed_args is not None:",
+    "        return runner(parsed_args)",
+    "    return runner(list(argv))"
+  ].join("\n");
+
+  const nextSource = source.replace(fallbackNeedle, replacement);
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: "Preferred raw argv dispatch for selected CLI runners in " + path.basename(scriptPath) + " before handoff."
+  };
+}
+
+export async function repairPythonStudyOrchestratorResolverPerRunFilterSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    source.includes("_autolabos_study_orchestrator_per_run_filter_marker") ||
+    !source.includes("def _find_study_orchestrator(") ||
+    !source.includes("fuzzy_matches.sort(key=lambda item: item[0])")
+  ) {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  let nextSource = source;
+  const explicitNeedle = "    explicit_candidates = [\n";
+  if (nextSource.includes(explicitNeedle) && !nextSource.includes('"execute_repeated_seed_study"')) {
+    nextSource = nextSource.replace(
+      explicitNeedle,
+      [
+        explicitNeedle.trimEnd(),
+        "        # _autolabos_study_orchestrator_per_run_filter_marker",
+        "        \"execute_repeated_seed_study\",",
+        "        \"run_repeated_seed_study\",",
+        "        \"execute_condition_sweep_study\",",
+        "        \"run_condition_sweep_study\",",
+        "        \"execute_planned_study\",",
+        "        \"run_planned_study\",",
+        "        \"execute_full_study\",",
+        "        \"run_full_study\",",
+      ].join("\n") + "\n"
+    );
+    repaired = true;
+  }
+
+  const sortNeedle = "        fuzzy_matches.sort(key=lambda item: item[0])\n        return fuzzy_matches[0][1]";
+  if (nextSource.includes(sortNeedle)) {
+    const replacement = [
+      "        high_level_tokens = (\"study\", \"sweep\", \"workflow\", \"orchestr\", \"plan\")",
+      "        per_run_tokens = (",
+      "            \"single_condition\",",
+      "            \"condition_seed\",",
+      "            \"single_seed\",",
+      "            \"single_planned_cell\",",
+      "            \"training_core\",",
+      "        )",
+      "        high_level_matches = [",
+      "            (name, candidate)",
+      "            for name, candidate in fuzzy_matches",
+      "            if any(token in name.lower() for token in high_level_tokens)",
+      "            and not any(token in name.lower() for token in per_run_tokens)",
+      "        ]",
+      "        if high_level_matches:",
+      "            high_level_matches.sort(key=lambda item: item[0])",
+      "            return high_level_matches[0][1]",
+      "        fuzzy_matches = [",
+      "            (name, candidate)",
+      "            for name, candidate in fuzzy_matches",
+      "            if not any(token in name.lower() for token in per_run_tokens)",
+      "        ]",
+      "        fuzzy_matches.sort(key=lambda item: item[0])",
+      "        return fuzzy_matches[0][1]"
+    ].join("\n");
+    nextSource = nextSource.replace(sortNeedle, replacement);
+    repaired = true;
+  }
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: "Filtered per-run helpers from study orchestrator resolution in " + path.basename(scriptPath) + " before handoff."
+  };
+}
+
+export async function repairPythonStudyOrchestratorOrderedPlanArgumentSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    source.includes("_autolabos_study_orchestrator_ordered_plan_argument_marker") ||
+    !source.includes("def _invoke_study_orchestrator(") ||
+    !source.includes("available_arguments: Dict[str, Any] = {") ||
+    !(
+      source.includes("def build_baseline_first_run_plan(") ||
+      source.includes("def build_locked_run_plan(") ||
+      source.includes("def build_ordered_run_plan(")
+    )
+  ) {
+    return { repaired: false };
+  }
+
+  const headerNeedle = ") -> Dict[str, Any]:\n    available_arguments: Dict[str, Any] = {";
+  if (!source.includes(headerNeedle)) {
+    return { repaired: false };
+  }
+
+  const replacement = [
+    ") -> Dict[str, Any]:",
+    "    # _autolabos_study_orchestrator_ordered_plan_argument_marker",
+    "    ordered_plan = None",
+    "    for _autolabos_plan_builder_name in (",
+    "        \"build_baseline_first_run_plan\",",
+    "        \"build_locked_run_plan\",",
+    "        \"build_ordered_run_plan\",",
+    "        \"build_run_plan\",",
+    "    ):",
+    "        _autolabos_plan_builder = globals().get(_autolabos_plan_builder_name)",
+    "        if not callable(_autolabos_plan_builder):",
+    "            continue",
+    "        _autolabos_plan_attempts = (",
+    "            lambda: _autolabos_plan_builder(",
+    "                condition_markers=getattr(parsed_args, \"condition_markers\", None),",
+    "                seed_schedule=getattr(parsed_args, \"seed_schedule\", None),",
+    "                baseline_marker=getattr(parsed_args, \"baseline_condition_marker\", None),",
+    "            ),",
+    "            lambda: _autolabos_plan_builder(",
+    "                condition_markers=runtime_config.get(\"condition_markers\"),",
+    "                seed_schedule=runtime_config.get(\"seed_schedule\"),",
+    "                baseline_marker=runtime_config.get(\"baseline_condition_marker\"),",
+    "            ),",
+    "            lambda: _autolabos_plan_builder(runtime_config),",
+    "            lambda: _autolabos_plan_builder(parsed_args),",
+    "            lambda: _autolabos_plan_builder(),",
+    "        )",
+    "        for _autolabos_plan_attempt in _autolabos_plan_attempts:",
+    "            try:",
+    "                ordered_plan = _autolabos_plan_attempt()",
+    "                break",
+    "            except TypeError:",
+    "                continue",
+    "        if ordered_plan is not None:",
+    "            break",
+    "",
+    "    available_arguments: Dict[str, Any] = {",
+    "        \"ordered_plan\": ordered_plan,",
+    "        \"run_plan\": ordered_plan,",
+    "        \"planned_runs\": ordered_plan,"
+  ].join("\n");
+
+  const nextSource = source.replace(headerNeedle, replacement);
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: "Materialized ordered-plan arguments for study orchestrator dispatch in " + path.basename(scriptPath) + " before handoff."
+  };
+}
+
+export async function repairPythonSingleCellExecutorRuntimeKwargsSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    source.includes("_autolabos_single_cell_executor_runtime_kwargs_marker") ||
+    !source.includes("def _invoke_single_cell_executor(") ||
+    !source.includes("cli_args=")
+  ) {
+    return { repaired: false };
+  }
+
+  const signatureNeedle = [
+    "    args: Any,",
+    "    workspace: Optional[Mapping[str, Any]] = None,",
+    "    model_selection: Optional[Mapping[str, Any]] = None,",
+    "    shared_state: Optional[MutableMapping[str, Any]] = None,",
+    ") -> Any:",
+    "    workspace_mapping: Mapping[str, Any] = workspace or {}"
+  ].join("\n");
+  if (!source.includes(signatureNeedle)) {
+    return { repaired: false };
+  }
+
+  const replacement = [
+    "    args: Any = None,",
+    "    workspace: Optional[Mapping[str, Any]] = None,",
+    "    model_selection: Optional[Mapping[str, Any]] = None,",
+    "    shared_state: Optional[MutableMapping[str, Any]] = None,",
+    "    cli_args: Any = None,",
+    "    output_dir: Any = None,",
+    "    device: Any = None,",
+    "    selected_model_info: Optional[Mapping[str, Any]] = None,",
+    "    experiment_metadata: Optional[Mapping[str, Any]] = None,",
+    ") -> Any:",
+    "    # _autolabos_single_cell_executor_runtime_kwargs_marker",
+    "    if args is None:",
+    "        args = cli_args",
+    "    if model_selection is None and selected_model_info is not None:",
+    "        model_selection = selected_model_info",
+    "    workspace_mapping: Mapping[str, Any] = workspace or {}",
+    "    if output_dir is not None and not workspace_mapping.get(\"output_dir\"):",
+    "        workspace_mapping = dict(workspace_mapping)",
+    "        workspace_mapping[\"output_dir\"] = output_dir"
+  ].join("\n");
+
+  const nextSource = source.replace(signatureNeedle, replacement);
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: "Accepted runtime kwargs in single-cell executor bridge for " + path.basename(scriptPath) + " before handoff."
+  };
+}
+
+export async function repairPythonFailureEvidenceNonRecursiveSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    source.includes("_autolabos_failure_evidence_nonrecursive_marker") ||
+    !source.includes("def _capture_failure_evidence(") ||
+    !source.includes("returned_failure_evidence") ||
+    !source.includes("_cell_jsonable(raw_failure)")
+  ) {
+    return { repaired: false };
+  }
+
+  const helperNeedle = "def _capture_failure_evidence(\n";
+  const helper = [
+    "def _autolabos_compact_failure_evidence(value: Any, *, depth: int = 0, max_depth: int = 2) -> Any:",
+    "    # _autolabos_failure_evidence_nonrecursive_marker",
+    "    if value is None:",
+    "        return None",
+    "    if depth >= max_depth:",
+    "        if isinstance(value, Mapping):",
+    "            return {",
+    "                str(key): _cell_jsonable(raw_value)",
+    "                for key, raw_value in value.items()",
+    "                if str(key)",
+    "                in {",
+    "                    \"kind\",",
+    "                    \"message\",",
+    "                    \"error\",",
+    "                    \"exception\",",
+    "                    \"exception_type\",",
+    "                    \"exception_repr\",",
+    "                    \"status\",",
+    "                    \"returned_error\",",
+    "                }",
+    "            }",
+    "        return _cell_jsonable(value)",
+    "    if isinstance(value, Mapping):",
+    "        compact: Dict[str, Any] = {}",
+    "        for key in (",
+    "            \"kind\",",
+    "            \"message\",",
+    "            \"error\",",
+    "            \"exception\",",
+    "            \"exception_type\",",
+    "            \"exception_repr\",",
+    "            \"status\",",
+    "            \"returned_error\",",
+    "        ):",
+    "            if key in value and value.get(key) is not None:",
+    "                compact[key] = _cell_jsonable(value.get(key))",
+    "        for key in (\"traceback\", \"returned_traceback\"):",
+    "            if key in value and value.get(key) is not None:",
+    "                compact[key] = str(value.get(key))[:4000]",
+    "        nested = value.get(\"returned_failure_evidence\")",
+    "        if nested is not None and nested is not value:",
+    "            compact[\"returned_failure_summary\"] = _autolabos_compact_failure_evidence(",
+    "                nested,",
+    "                depth=depth + 1,",
+    "                max_depth=max_depth,",
+    "            )",
+    "        if compact:",
+    "            return compact",
+    "        return {\"summary\": str(_cell_jsonable(dict(value)))[:1000]}",
+    "    if isinstance(value, (list, tuple)):",
+    "        return [",
+    "            _autolabos_compact_failure_evidence(item, depth=depth + 1, max_depth=max_depth)",
+    "            for item in list(value)[:5]",
+    "        ]",
+    "    return _cell_jsonable(value)",
+    "",
+    "",
+    helperNeedle.trimEnd()
+  ].join("\n");
+
+  let nextSource = source.replace(helperNeedle, helper);
+  nextSource = nextSource.replaceAll(
+    "payload[\"returned_failure_evidence\"] = _cell_jsonable(raw_failure)",
+    "payload[\"returned_failure_evidence\"] = _autolabos_compact_failure_evidence(raw_failure)"
+  );
+  nextSource = nextSource.replaceAll(
+    "\"failure_evidence\": copy.deepcopy(record.get(\"failure_evidence\")),",
+    "\"failure_evidence\": _autolabos_compact_failure_evidence(record.get(\"failure_evidence\")),"
+  );
+
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: "Bounded recursive failure evidence capture in " + path.basename(scriptPath) + " before handoff."
+  };
+}
+
+export async function repairPythonSupportedKwargsSemanticAliasSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    source.includes("_autolabos_supported_kwargs_semantic_alias_marker") ||
+    !source.includes("def _call_with_supported_kwargs(") ||
+    !source.includes("accepted_kwargs = {key: value for key, value in kwargs.items() if key in parameters}")
+  ) {
+    return { repaired: false };
+  }
+
+  const needle = "    accepted_kwargs = {key: value for key, value in kwargs.items() if key in parameters}\n";
+  const replacement = [
+    needle.trimEnd(),
+    "    # _autolabos_supported_kwargs_semantic_alias_marker",
+    "    if \"condition_marker\" in parameters and \"condition_marker\" not in accepted_kwargs:",
+    "        _autolabos_condition_value = (",
+    "            kwargs.get(\"condition\")",
+    "            or kwargs.get(\"condition_spec\")",
+    "            or kwargs.get(\"planned_run\")",
+    "            or kwargs.get(\"run_spec\")",
+    "        )",
+    "        if _autolabos_condition_value is not None:",
+    "            _autolabos_marker_helper = globals().get(\"_condition_marker_from_any\")",
+    "            if callable(_autolabos_marker_helper):",
+    "                accepted_kwargs[\"condition_marker\"] = _autolabos_marker_helper(_autolabos_condition_value)",
+    "            elif isinstance(_autolabos_condition_value, Mapping):",
+    "                accepted_kwargs[\"condition_marker\"] = (",
+    "                    _autolabos_condition_value.get(\"condition_marker\")",
+    "                    or _autolabos_condition_value.get(\"marker\")",
+    "                    or _autolabos_condition_value.get(\"name\")",
+    "                    or _autolabos_condition_value.get(\"id\")",
+    "                )",
+    "            else:",
+    "                accepted_kwargs[\"condition_marker\"] = getattr(",
+    "                    _autolabos_condition_value,",
+    "                    \"condition_marker\",",
+    "                    getattr(_autolabos_condition_value, \"marker\", _autolabos_condition_value),",
+    "                )",
+    "    if \"run_context\" in parameters and \"run_context\" not in accepted_kwargs:",
+    "        for _autolabos_context_key in (\"condition_context\", \"context\", \"run_context_payload\"):",
+    "            if kwargs.get(_autolabos_context_key) is not None:",
+    "                accepted_kwargs[\"run_context\"] = kwargs.get(_autolabos_context_key)",
+    "                break",
+    "    if \"model_selection\" in parameters and \"model_selection\" not in accepted_kwargs and kwargs.get(\"selection_decision\") is not None:",
+    "        accepted_kwargs[\"model_selection\"] = kwargs.get(\"selection_decision\")",
+    ""
+  ].join("\n");
+
+  const nextSource = source.replace(needle, replacement);
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: "Added semantic kwargs aliases in " + path.basename(scriptPath) + " before handoff."
+  };
+}
+
+export async function repairPythonFlexibleInvocationPlannedRunAliasSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    source.includes("_autolabos_flexible_invocation_planned_run_alias_marker") ||
+    !source.includes("inspect.signature") ||
+    !source.includes("**kwargs") ||
+    !source.includes("raise KeyError(parameter.name)")
+  ) {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  const nextSource = source.replace(
+    /^(\s*)raise KeyError\(parameter\.name\)$/gmu,
+    (_match: string, indent: string) => {
+      repaired = true;
+      return [
+        `${indent}# _autolabos_flexible_invocation_planned_run_alias_marker`,
+        `${indent}_autolabos_parameter_name = str(getattr(parameter, "name", ""))`,
+        `${indent}_autolabos_aliases_by_parameter = {`,
+        `${indent}    "planned_run": ("planned_run", "run_spec", "plan_entry", "planned_row", "row", "planned_payload", "current_run", "run_record"),`,
+        `${indent}    "condition": ("condition", "condition_spec", "planned_condition", "locked_condition", "run_condition"),`,
+        `${indent}    "condition_spec": ("condition_spec", "condition", "planned_condition", "locked_condition", "run_condition"),`,
+        `${indent}    "seed": ("seed", "run_seed", "random_seed"),`,
+        `${indent}    "ordinal": ("ordinal", "index", "run_index", "planned_index"),`,
+        `${indent}    "total_planned_runs": ("total_planned_runs", "total_runs", "run_count", "planned_run_count"),`,
+        `${indent}    "preflight": ("preflight", "preflight_result", "model_preflight"),`,
+        `${indent}    "config": ("config", "runtime_config", "study_config", "cfg"),`,
+        `${indent}}`,
+        `${indent}_autolabos_target_kwargs = None`,
+        `${indent}for _autolabos_mapping_name in ("accepted_kwargs", "filtered_kwargs", "call_kwargs", "supported_kwargs", "bound_kwargs", "accepted", "selected_kwargs", "provided_kwargs"):`,
+        `${indent}    _autolabos_mapping = locals().get(_autolabos_mapping_name)`,
+        `${indent}    if isinstance(_autolabos_mapping, dict):`,
+        `${indent}        _autolabos_target_kwargs = _autolabos_mapping`,
+        `${indent}        break`,
+        `${indent}if _autolabos_target_kwargs is None:`,
+        `${indent}    _autolabos_target_kwargs = kwargs`,
+        `${indent}for _autolabos_alias in _autolabos_aliases_by_parameter.get(_autolabos_parameter_name, ()):`,
+        `${indent}    if _autolabos_alias in kwargs and kwargs.get(_autolabos_alias) is not None:`,
+        `${indent}        _autolabos_target_kwargs[parameter.name] = kwargs.get(_autolabos_alias)`,
+        `${indent}        break`,
+        `${indent}else:`,
+        `${indent}    raise KeyError(parameter.name)`
+      ].join("\n");
+    }
+  );
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message:
+      "Added semantic planned-run aliases to flexible invocation in " +
+      path.basename(scriptPath) +
+      " before handoff."
+  };
+}
+
+export async function repairPythonSingleRunExecutionBridgeSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    source.includes("_autolabos_single_run_execution_bridge_marker") ||
+    !source.includes("def run_single_condition_seed(") ||
+    !source.includes("training_executor = _resolve_existing_callable(") ||
+    !source.includes("evaluation_executor = _resolve_existing_callable(")
+  ) {
+    return { repaired: false };
+  }
+
+  let nextSource = source;
+  const mappingNeedle = [
+    "            if isinstance(resolved, Mapping):",
+    "                condition_context = dict(resolved)"
+  ].join("\n");
+  if (nextSource.includes(mappingNeedle)) {
+    const mappingReplacement = [
+      "            if isinstance(resolved, Mapping):",
+      "                condition_context = dict(resolved)",
+      "            elif is_dataclass(resolved):",
+      "                condition_context = asdict(resolved)",
+      "            if isinstance(condition_context.get(\"context\"), Mapping):",
+      "                _autolabos_nested_context = dict(condition_context.get(\"context\") or {})",
+      "                _autolabos_nested_context.update({",
+      "                    str(key): value",
+      "                    for key, value in condition_context.items()",
+      "                    if key != \"context\"",
+      "                })",
+      "                condition_context = _autolabos_nested_context"
+    ].join("\n");
+    nextSource = nextSource.replace(mappingNeedle, mappingReplacement);
+  }
+
+  const bridgeNeedle = "def run_single_condition_seed(\n";
+  if (!nextSource.includes(bridgeNeedle)) {
+    return { repaired: false };
+  }
+
+  const bridge = [
+    "def execute_single_training_run(",
+    "    *,",
+    "    condition: Any,",
+    "    seed: int,",
+    "    output_root: Optional[Union[str, Path]] = None,",
+    "    args: Optional[argparse.Namespace] = None,",
+    "    condition_context: Optional[Mapping[str, Any]] = None,",
+    "    selection_decision: Optional[Mapping[str, Any]] = None,",
+    "    max_train_examples: Optional[int] = None,",
+    "    allow_download: Optional[bool] = None,",
+    "    model_name_override: Optional[str] = None,",
+    "    extra_run_metadata: Optional[Mapping[str, Any]] = None,",
+    "    **kwargs: Any,",
+    ") -> Dict[str, Any]:",
+    "    # _autolabos_single_run_execution_bridge_marker",
+    "    context_payload = dict(condition_context or {})",
+    "    selection_payload = dict(selection_decision or context_payload.get(\"model_selection\") or {})",
+    "    model_name = (",
+    "        model_name_override",
+    "        or context_payload.get(\"selected_model\")",
+    "        or context_payload.get(\"selected_model_name\")",
+    "        or selection_payload.get(\"selected_model\")",
+    "    )",
+    "    if not model_name:",
+    "        return {\"ok\": False, \"status\": \"failed\", \"stage\": \"training_setup\", \"message\": \"No selected model was available for the training core.\"}",
+    "    data_builder = globals().get(\"prepare_instruction_tuning_data\")",
+    "    training_core = globals().get(\"run_single_condition_seed_training_core\")",
+    "    if not callable(training_core):",
+    "        return {\"ok\": False, \"status\": \"failed\", \"stage\": \"training_setup\", \"message\": \"No compatible training core helper was found.\"}",
+    "    data_payload: Dict[str, Any] = {}",
+    "    if callable(data_builder):",
+    "        data_payload = _call_with_supported_kwargs(",
+    "            data_builder,",
+    "            seed=seed,",
+    "            max_train_samples_per_task=max_train_examples,",
+    "            max_train_examples=max_train_examples,",
+    "            allow_download=allow_download,",
+    "            args=args,",
+    "        )",
+    "        if not isinstance(data_payload, Mapping):",
+    "            data_payload = {}",
+    "    train_examples = (",
+    "        data_payload.get(\"train_records\")",
+    "        or data_payload.get(\"train_examples\")",
+    "        or data_payload.get(\"train_dataset\")",
+    "    )",
+    "    if not train_examples:",
+    "        return {",
+    "            \"ok\": False,",
+    "            \"status\": \"failed\",",
+    "            \"stage\": \"training_data\",",
+    "            \"message\": \"No training examples were available for the training core.\",",
+    "            \"data_preparation\": _cell_jsonable(data_payload) if globals().get(\"_cell_jsonable\") else data_payload,",
+    "        }",
+    "    loading_policy = (",
+    "        context_payload.get(\"loading_policy\")",
+    "        or selection_payload.get(\"loading_policy\")",
+    "        or {}",
+    "    )",
+    "    output_base = output_root or context_payload.get(\"output_root\") or context_payload.get(\"output_dir\") or \".\"",
+    "    artifacts = _call_with_supported_kwargs(",
+    "        training_core,",
+    "        model_name=model_name,",
+    "        condition=condition,",
+    "        seed=seed,",
+    "        train_examples=train_examples,",
+    "        output_root=output_base,",
+    "        loading_policy=loading_policy,",
+    "        max_steps=getattr(args, \"max_train_steps\", None) if args is not None else None,",
+    "        per_device_train_batch_size=getattr(args, \"per_device_train_batch_size\", None) if args is not None else None,",
+    "        gradient_accumulation_steps=getattr(args, \"gradient_accumulation_steps\", None) if args is not None else None,",
+    "        learning_rate=getattr(args, \"learning_rate\", None) if args is not None else None,",
+    "        max_seq_length=getattr(args, \"max_seq_length\", None) if args is not None else None,",
+    "    )",
+    "    summary = dict(getattr(artifacts, \"summary\", {}) or {})",
+    "    summary.update({",
+    "        \"ok\": True,",
+    "        \"status\": \"completed\",",
+    "        \"stage\": \"training\",",
+    "        \"message\": summary.get(\"message\") or \"Training core completed.\",",
+    "        \"selected_model\": model_name,",
+    "        \"used_fallback_model\": bool(context_payload.get(\"used_fallback\") or context_payload.get(\"used_fallback_model\")),",
+    "        \"model\": getattr(artifacts, \"model\", None),",
+    "        \"tokenizer\": getattr(artifacts, \"tokenizer\", None),",
+    "        \"output_dir\": str(getattr(artifacts, \"output_dir\", output_base)),",
+    "        \"data_preparation\": _cell_jsonable(data_payload) if globals().get(\"_cell_jsonable\") else data_payload,",
+    "    })",
+    "    return summary",
+    "",
+    "def evaluate_single_run_tasks(",
+    "    *,",
+    "    condition: Any,",
+    "    seed: int,",
+    "    output_root: Optional[Union[str, Path]] = None,",
+    "    args: Optional[argparse.Namespace] = None,",
+    "    condition_context: Optional[Mapping[str, Any]] = None,",
+    "    execution_result: Optional[Mapping[str, Any]] = None,",
+    "    max_eval_examples_per_task: Optional[int] = None,",
+    "    **kwargs: Any,",
+    ") -> Dict[str, Any]:",
+    "    evaluator = globals().get(\"evaluate_ordered_benchmarks\")",
+    "    if not callable(evaluator):",
+    "        return {\"ok\": False, \"status\": \"failed\", \"stage\": \"evaluation_setup\", \"message\": \"No compatible benchmark evaluator helper was found.\"}",
+    "    execution_payload = dict(execution_result or {})",
+    "    model = execution_payload.get(\"model\")",
+    "    tokenizer = execution_payload.get(\"tokenizer\")",
+    "    if model is None or tokenizer is None:",
+    "        return {\"ok\": False, \"status\": \"failed\", \"stage\": \"evaluation_setup\", \"message\": \"Training result did not expose a model/tokenizer for evaluation.\"}",
+    "    result = _call_with_supported_kwargs(",
+    "        evaluator,",
+    "        model=model,",
+    "        tokenizer=tokenizer,",
+    "        evaluation_seed=seed,",
+    "        device=kwargs.get(\"device\") or globals().get(\"RUNTIME_DEVICE\"),",
+    "        max_examples_per_task=max_eval_examples_per_task,",
+    "        dataset_cache_dir=getattr(args, \"dataset_cache_dir\", None) if args is not None else None,",
+    "        max_length=getattr(args, \"max_seq_length\", None) if args is not None else None,",
+    "    )",
+    "    if isinstance(result, Mapping):",
+    "        payload = dict(result)",
+    "    else:",
+    "        payload = {\"value\": result}",
+    "    payload.setdefault(\"ok\", bool(payload.get(\"average_accuracy\") is not None or payload.get(\"average_accuracy_observed\") is not None))",
+    "    payload.setdefault(\"status\", \"completed\" if payload.get(\"ok\") else \"failed\")",
+    "    payload.setdefault(\"stage\", \"evaluation\")",
+    "    payload.setdefault(\"message\", \"Evaluation completed.\" if payload.get(\"ok\") else \"Evaluation did not produce an accuracy.\")",
+    "    return payload",
+    "",
+    bridgeNeedle
+  ].join("\n");
+
+  nextSource = nextSource.replace(bridgeNeedle, bridge);
+
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: "Bridged single-run execution helpers in " + path.basename(scriptPath) + " before handoff."
+  };
+}
+
+export async function repairPythonSingleCellResolverAvoidSelfSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    source.includes("_autolabos_single_cell_resolver_avoid_self_marker") ||
+    !source.includes("def _resolve_single_cell_executor(") ||
+    !source.includes("Could not locate the single planned-cell executor") ||
+    !source.includes('"execute_single_planned_cell",')
+  ) {
+    return { repaired: false };
+  }
+
+  let nextSource = source.replace(
+    '    for candidate_name in (\n        "execute_single_planned_cell",',
+    [
+      '    # _autolabos_single_cell_resolver_avoid_self_marker',
+      '    for candidate_name in (',
+      '        "run_single_condition_seed",',
+      '        "run_single_condition_seed_experiment",',
+      '        "run_single_experiment_cell",',
+      '        "train_and_evaluate_condition_seed",',
+      '        "train_and_evaluate_single_run",',
+      '        "execute_condition_seed_run",',
+      '        "execute_single_condition_seed",',
+      '        "execute_single_planned_cell",'
+    ].join('\n')
+  );
+
+  nextSource = nextSource.replace(
+    '        if callable(candidate):\n            return cast(Callable[..., Mapping[str, Any]], candidate)',
+    [
+      '        if callable(candidate):',
+      '            _autolabos_planned_cell = globals().get("execute_single_planned_cell")',
+      '            if candidate is _autolabos_planned_cell and candidate_name in {',
+      '                "execute_single_planned_cell",',
+      '                "execute_planned_run_cell",',
+      '                "execute_planned_cell",',
+      '                "run_planned_cell",',
+      '                "execute_single_planned_run",',
+      '                "execute_planned_run_spec",',
+      '                "run_single_planned_run",',
+      '            }:',
+      '                continue',
+      '            return cast(Callable[..., Mapping[str, Any]], candidate)'
+    ].join('\n')
+  );
+
+  if (nextSource === source || !nextSource.includes("_autolabos_single_cell_resolver_avoid_self_marker")) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: "Prevented single-cell executor resolver from selecting its planned-cell wrapper in " + path.basename(scriptPath) + " before handoff."
+  };
+}
+
+export async function repairPythonObservedAverageAccuracyAliasSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    source.includes("_autolabos_observed_average_accuracy_alias_marker") ||
+    !source.includes("average_accuracy_observed") ||
+    !source.includes('payload.setdefault("ok", bool(payload.get("average_accuracy") is not None or payload.get("average_accuracy_observed") is not None))')
+  ) {
+    return { repaired: false };
+  }
+
+  const needle = '    payload.setdefault("ok", bool(payload.get("average_accuracy") is not None or payload.get("average_accuracy_observed") is not None))';
+  const replacement = [
+    '    # _autolabos_observed_average_accuracy_alias_marker',
+    '    if payload.get("average_accuracy") is None and payload.get("average_accuracy_observed") is not None:',
+    '        payload["average_accuracy"] = payload.get("average_accuracy_observed")',
+    needle
+  ].join('\n');
+
+  const nextSource = source.replace(needle, replacement);
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: "Aliased observed average accuracy into primary average accuracy in " + path.basename(scriptPath) + " before handoff."
+  };
+}
+
+export async function repairPythonEvaluationSummaryObservedAverageSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    source.includes("_autolabos_evaluation_summary_observed_average_marker") ||
+    !source.includes("def _chunk243_extract_evaluation_summary(") ||
+    !source.includes('_chunk243_pick_first(evaluation, "average_accuracy", "mean_accuracy")')
+  ) {
+    return { repaired: false };
+  }
+
+  const nextSource = source.replace(
+    '_chunk243_pick_first(evaluation, "average_accuracy", "mean_accuracy")',
+    '_chunk243_pick_first(evaluation, "average_accuracy", "mean_accuracy", "average_accuracy_observed", "observed_average_accuracy")  # _autolabos_evaluation_summary_observed_average_marker'
+  );
+
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: "Allowed observed average accuracy in evaluation summaries for " + path.basename(scriptPath) + " before handoff."
+  };
+}
+
+export async function repairPythonLoopRunRecordRawResultMetricProjectionSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    source.includes("_autolabos_loop_raw_result_metric_projection_marker") ||
+    !source.includes("def _normalize_loop_run_record(") ||
+    !source.includes('"average_accuracy": record.get("average_accuracy"),') ||
+    !source.includes('"train_loss": record.get("train_loss", record.get("loss")),')
+  ) {
+    return { repaired: false };
+  }
+
+  let nextSource = source.replace(
+    '    task_metrics = record.get("task_metrics")\n',
+    [
+      '    task_metrics = record.get("task_metrics")',
+      '    # _autolabos_loop_raw_result_metric_projection_marker',
+      '    raw_result_record = record.get("raw_result")',
+      '    raw_result_metrics = record.get("metrics") if isinstance(record.get("metrics"), Mapping) else (raw_result_record.get("metrics") if isinstance(raw_result_record, Mapping) else None)',
+      '    if task_metrics is None and isinstance(raw_result_record, Mapping):',
+      '        task_metrics = raw_result_record.get("task_metrics") or raw_result_record.get("task_results")',
+      ''
+    ].join('\n')
+  );
+
+  nextSource = nextSource.replace(
+    '    normalized: Dict[str, Any] = {',
+    [
+      '    average_accuracy = record.get("average_accuracy")',
+      '    if average_accuracy is None and isinstance(raw_result_metrics, Mapping):',
+      '        average_accuracy = raw_result_metrics.get("average_accuracy") or raw_result_metrics.get("mean_accuracy")',
+      '    if average_accuracy is None and isinstance(raw_result_record, Mapping):',
+      '        average_accuracy = raw_result_record.get("average_accuracy") or raw_result_record.get("average_accuracy_observed")',
+      '    train_loss = record.get("train_loss", record.get("loss"))',
+      '    if train_loss is None and isinstance(raw_result_metrics, Mapping):',
+      '        train_loss = raw_result_metrics.get("train_loss") or raw_result_metrics.get("loss")',
+      '',
+      '    normalized: Dict[str, Any] = {'
+    ].join('\n')
+  );
+
+  nextSource = nextSource.replace(
+    '        "train_loss": record.get("train_loss", record.get("loss")),',
+    '        "train_loss": train_loss,'
+  );
+  nextSource = nextSource.replace(
+    '        "average_accuracy": record.get("average_accuracy"),',
+    '        "average_accuracy": average_accuracy,'
+  );
+
+  if (nextSource === source || !nextSource.includes("_autolabos_loop_raw_result_metric_projection_marker")) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: "Projected nested raw-result metrics into loop run records for " + path.basename(scriptPath) + " before handoff."
+  };
+}
+
 export async function repairPythonRuntimePathPrepareCallableSurface(
   scriptPath?: string
 ): Promise<{
@@ -38645,7 +39950,7 @@ export async function repairPythonRankDropoutMarkerParserCollisionSurface(script
     return { repaired: false };
   }
 
-  const marker = "_autolabos_rank_dropout_marker_parser_collision_marker";
+  const marker = "_autolabos_condition_parameter_marker_parser_collision_marker";
   const parserDefinitions = source.match(/\ndef\s+_parse_condition_marker\s*\(/gu) || [];
   if (
     source.includes(marker) ||
@@ -42256,6 +43561,130 @@ export async function repairPythonConditionSeedPlanDispatchSurface(scriptPath?: 
   };
 }
 
+export async function repairPythonWorkflowSingleRunExecutorCandidateSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_workflow_single_run_executor_candidate_marker";
+  const needle =
+    '            "execute_single_planned_run",\n' +
+    '            "run_single_planned_run",\n' +
+    '            "execute_planned_run",\n' +
+    '            "run_condition_seed",\n';
+  if (
+    source.includes(marker) ||
+    !source.includes('raise RuntimeError("No experiment execution helper is available in the current runner.")') ||
+    !source.includes(needle)
+  ) {
+    return { repaired: false };
+  }
+
+  const availableCandidates = [
+    "execute_one_planned_run",
+    "execute_condition_seed_run",
+    "execute_condition_seed_experiment",
+    "run_condition_seed_experiment",
+    "run_one_condition_seed"
+  ].filter((name) => pythonSourceDefinesOrImportsName(source, name));
+  if (availableCandidates.length === 0) {
+    return { repaired: false };
+  }
+
+  const insertion =
+    `            # ${marker}\n` +
+    availableCandidates.map((name) => `            ${JSON.stringify(name)},`).join("\n") +
+    "\n";
+  const nextSource = source.replace(needle, needle + insertion);
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added generated single-run executor candidates (${availableCandidates.join(", ")}) to workflow fallback resolution in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonWorkflowConditionRowsFromPlannedRunsSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_condition_rows_from_planned_runs_marker";
+  const needle = "    grouped_rows: Dict[str, List[Mapping[str, Any]]] = {}\n";
+  if (
+    source.includes(marker) ||
+    !source.includes("def _workflow_fallback_aggregate(") ||
+    !source.includes("condition_specs_raw = runtime_context.get(\"condition_specs\")") ||
+    !source.includes("planned_run_rows: Sequence[Mapping[str, Any]]") ||
+    !source.includes(needle)
+  ) {
+    return { repaired: false };
+  }
+
+  const block = [
+    `    # ${marker}`,
+    "    if not condition_rows:",
+    "        seen_condition_markers = set()",
+    "        for planned_row in planned_run_rows:",
+    "            planned_mapping = _as_row_dict(planned_row)",
+    "            condition_payload = planned_mapping.get(\"condition\") or planned_mapping.get(\"condition_spec\") or planned_mapping.get(\"spec\")",
+    "            spec_row = _as_row_dict(condition_payload)",
+    "            marker = (",
+    "                spec_row.get(\"condition_marker\")",
+    "                or spec_row.get(\"marker\")",
+    "                or planned_mapping.get(\"condition_marker\")",
+    "                or planned_mapping.get(\"marker\")",
+    "            )",
+    "            if marker is None:",
+    "                continue",
+    "            marker = str(marker)",
+    "            if marker in seen_condition_markers:",
+    "                continue",
+    "            seen_condition_markers.add(marker)",
+    "            if not spec_row:",
+    "                spec_row = {}",
+    "            spec_row[\"condition_marker\"] = marker",
+    "            for key in (\"rank\", \"dropout\", \"adapter_dropout\", \"is_baseline\", \"baseline\"):",
+    "                if spec_row.get(key) is None and planned_mapping.get(key) is not None:",
+    "                    spec_row[key] = planned_mapping.get(key)",
+    "            condition_rows.append(spec_row)",
+    ""
+  ].join("\n");
+  const nextSource = source.replace(needle, block + needle);
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Derived fallback condition summaries from planned run rows in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
 export async function repairPythonLockedBaselineFirstExecutionResolverSurface(scriptPath?: string): Promise<{
   repaired: boolean;
   message?: string;
@@ -43138,6 +44567,74 @@ export async function repairPythonPublicStudyTopLevelRunnerAliasSurface(scriptPa
         message: `Removed duplicate runtime selector arguments from public study top-level runner alias in ${path.basename(scriptPath)} before handoff.`
       };
     }
+  }
+
+  const orderedPlanMarker = "_autolabos_ordered_plan_orchestrator_alias_marker";
+  if (
+    !source.includes(orderedPlanMarker) &&
+    source.includes("No experiment orchestrator callable was found in the runner module") &&
+    source.includes("def _run_orchestration_entry(") &&
+    source.includes("def execute_planned_runs_with_incremental_persistence(") &&
+    source.includes("def execute_single_planned_run(") &&
+    source.includes("def build_locked_run_plan(") &&
+    source.includes("def build_experiment_contract(") &&
+    source.includes("def aggregate_experiment_results(")
+  ) {
+    const insertionPoint = source.match(/\ndef\s+_run_orchestration_entry\s*\(/u)?.index;
+    if (insertionPoint === undefined) {
+      return { repaired: false };
+    }
+    const bridge = [
+      "",
+      `# ${orderedPlanMarker}`,
+      "def _autolabos_ordered_plan_orchestrator(args=None, output_dir=None, metrics_path=None, **keyword):",
+      "    if args is None:",
+      "        parser = globals().get('_parse_entry_args') or globals().get('parse_args') or globals().get('parse_cli_args')",
+      "        if callable(parser):",
+      "            args = parser()",
+      "    if args is None:",
+      "        raise RuntimeError('No argparse namespace was available for the ordered-plan runner.')",
+      "    resolved_output_dir = Path(output_dir or getattr(args, 'output_dir', None) or globals().get('DEFAULT_PUBLIC_OUTPUT_DIR', '.'))",
+      "    resolved_output_dir.mkdir(parents=True, exist_ok=True)",
+      "    timeout_sec = getattr(args, 'max_runtime_seconds', globals().get('MAX_WALL_CLOCK_TIMEOUT_SEC', 1800))",
+      "    contract = build_experiment_contract(timeout_sec=timeout_sec)",
+      "    planned_runs = build_locked_run_plan(contract)",
+      "    def _autolabos_run_executor(planned_run, ordinal, total_runs):",
+      "        return execute_single_planned_run(args=args, planned_run=planned_run, output_dir=resolved_output_dir)",
+      "    execution_report = execute_planned_runs_with_incremental_persistence(",
+      "        contract=contract,",
+      "        planned_runs=planned_runs,",
+      "        output_dir=resolved_output_dir,",
+      "        run_executor=_autolabos_run_executor,",
+      "        logger=globals().get('LOGGER'),",
+      "    )",
+      "    aggregate_report = aggregate_experiment_results(execution_report.get('run_records', []), contract)",
+      "    merged_report = {}",
+      "    merged_report.update(execution_report)",
+      "    merged_report.update(aggregate_report)",
+      "    completed = int(merged_report.get('completed_run_count') or 0)",
+      "    failed = int(merged_report.get('failed_run_count') or 0)",
+      "    merged_report.setdefault('status', 'ok' if completed > 0 and failed == 0 else ('partial' if completed > 0 else 'failed'))",
+      "    merged_report.setdefault('success', merged_report.get('status') in {'ok', 'partial'})",
+      "    return merged_report",
+      "",
+      "if 'orchestrate_experiment' not in globals():",
+      "    orchestrate_experiment = _autolabos_ordered_plan_orchestrator",
+      "if 'run_experiment' not in globals():",
+      "    run_experiment = _autolabos_ordered_plan_orchestrator",
+      "if 'execute_experiment' not in globals():",
+      "    execute_experiment = _autolabos_ordered_plan_orchestrator",
+      ""
+    ].join("\n");
+    const nextSource = `${source.slice(0, insertionPoint)}${bridge}${source.slice(insertionPoint)}`;
+    if (nextSource === source) {
+      return { repaired: false };
+    }
+    await fs.writeFile(scriptPath, nextSource, "utf8");
+    return {
+      repaired: true,
+      message: `Added ordered-plan top-level orchestrator alias in ${path.basename(scriptPath)} before handoff.`
+    };
   }
 
   if (

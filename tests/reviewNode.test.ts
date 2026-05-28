@@ -1300,7 +1300,7 @@ describe("review node", () => {
         source: "metrics.condition_summaries",
         metrics: [{ key: "accuracy_delta_vs_baseline_mean", value: 0.0667, primary_value: 0.0667, baseline_value: 0 }],
         hypothesis_supported: true,
-        summary: "rank32 improves mean delta by 0.0667."
+        summary: "candidate condition improves mean delta by 0.0667."
       }],
       execution_summary: { observation_count: 1, commands: [], sources: [], stderr_excerpts: [] },
       primary_findings: ["Selected design was analyzed with 25 executed trial(s)."],
@@ -1439,7 +1439,7 @@ describe("review node", () => {
         source: "metrics.condition_results",
         metrics: [{ key: "accuracy_delta_vs_baseline", value: 0.0625, primary_value: 0.0625, baseline_value: 0 }],
         hypothesis_supported: true,
-        summary: "rank4 improves delta by 0.0625."
+        summary: "alternate candidate improves delta by 0.0625."
       }],
       execution_summary: { observation_count: 1, commands: [], sources: [], stderr_excerpts: [] },
       primary_findings: ["Selected design was analyzed with 1 executed trial."],

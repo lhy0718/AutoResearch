@@ -218,7 +218,7 @@ describe("paper submission sanitization", () => {
                 is_baseline: true
               },
               {
-                label: "rank 4 / dropout 0",
+                label: "candidate condition A",
                 value: 0.333334,
                 adapter_rank: 4,
                 adapter_dropout: 0,
@@ -1488,8 +1488,8 @@ describe("paper submission sanitization", () => {
             caption:
               "Task-level and average accuracy for the leading condition; paired bars compare the locked baseline with the best observed condition-parameter cell.",
             bars: [
-              { label: "Baseline ARC Challenge", value: 0.5 },
-              { label: "Leading ARC Challenge", value: 0.5 },
+              { label: "Baseline Benchmark Task A", value: 0.5 },
+              { label: "Leading Benchmark Task A", value: 0.5 },
               { label: "Baseline Benchmark Task B", value: 0.1667 },
               { label: "Leading Benchmark Task B", value: 0.3333 },
               { label: "Baseline Average", value: 0.3333 },

@@ -2292,7 +2292,7 @@ describe("objective metric propagation", () => {
           best_recipe: "unmodified_baseline",
           primary_metric: "mean_zero_shot_accuracy_benchmark_tasks",
           baseline_comparisons_bootstrap: {
-            broader_target_adapter_rank16_alpha32_dropout005_q_k_v_o_mlp: {
+            candidate_condition_extended: {
               mean_delta: -0.015625,
               bootstrap_ci95_low: -0.057291666666666664,
               bootstrap_ci95_high: 0.026041666666666668
@@ -2307,7 +2307,7 @@ describe("objective metric propagation", () => {
                 benchmark_task_b: { accuracy: 0.5, correct: 48, total: 96 }
               }
             },
-            standard_adapter_rank16_alpha32_dropout005_q_v_baseline: {
+            baseline_condition_locked: {
               status: "completed",
               training: { trained: true, trainable_parameters: 2252800 },
               evaluation: {
@@ -2315,7 +2315,7 @@ describe("objective metric propagation", () => {
                 benchmark_task_b: { accuracy: 0.5, correct: 48, total: 96 }
               }
             },
-            broader_target_adapter_rank16_alpha32_dropout005_q_k_v_o_mlp: {
+            candidate_condition_extended: {
               status: "completed",
               training: { trained: true, trainable_parameters: 12615680 },
               evaluation: {
@@ -2425,7 +2425,7 @@ describe("objective metric propagation", () => {
       JSON.stringify(
         {
           mean_zero_shot_accuracy_benchmark_tasks: 0.313533,
-          best_tuned_condition_id: "adapter_r16_attention_mlp",
+          best_tuned_condition_id: "candidate_condition_b",
           result_rows: [
             {
               condition_id: "reference_base_model",
@@ -2440,7 +2440,7 @@ describe("objective metric propagation", () => {
               mean_zero_shot_accuracy_benchmark_tasks: 0.304353
             },
             {
-              condition_id: "adapter_r16_attention_mlp",
+              condition_id: "candidate_condition_b",
               recipe_type: "candidate",
               mean_zero_shot_accuracy_benchmark_tasks: 0.313533
             }
@@ -2558,8 +2558,8 @@ describe("objective metric propagation", () => {
                 }
               }
             },
-            adapter_r8: {
-              recipe: "adapter_r8",
+            candidate_condition_a: {
+              recipe: "candidate_condition_a",
               evaluation: {
                 mean_zero_shot_accuracy: 0.5,
                 per_benchmark_accuracy: {
@@ -2681,7 +2681,7 @@ describe("objective metric propagation", () => {
               }
             },
             {
-              name: "adapter_r8",
+              name: "candidate_condition_a",
               status: "completed",
               is_baseline: false,
               eval_metrics: {
@@ -2694,7 +2694,7 @@ describe("objective metric propagation", () => {
               train_metrics: { train_loss: 1.9787727832794189 }
             },
             {
-              name: "adapter_r16",
+              name: "candidate_condition_b",
               status: "completed",
               is_baseline: false,
               eval_metrics: {
@@ -3773,7 +3773,7 @@ describe("objective metric propagation", () => {
               training_wall_time_sec: 0
             },
             {
-              name: "adapter_r8",
+              name: "candidate_condition_a",
               benchmark_task_a_accuracy: 0.2734375,
               benchmark_task_b_accuracy: 0.5234375,
               mean_zero_shot_accuracy: 0.3984375,
@@ -3781,7 +3781,7 @@ describe("objective metric propagation", () => {
               training_wall_time_sec: 431.3
             },
             {
-              name: "adapter_r16",
+              name: "candidate_condition_b",
               benchmark_task_a_accuracy: 0.265625,
               benchmark_task_b_accuracy: 0.53125,
               mean_zero_shot_accuracy: 0.3984375,
@@ -3800,7 +3800,7 @@ describe("objective metric propagation", () => {
               training: { trainable_params: 0, wall_time_sec: 0 }
             },
             {
-              name: "adapter_r8",
+              name: "candidate_condition_a",
               condition_type: "peft_adapter_instruction_tuned",
               evaluation: {
                 benchmark_task_a: { accuracy: 0.2734375 },
@@ -3809,7 +3809,7 @@ describe("objective metric propagation", () => {
               training: { trainable_params: 6307840, wall_time_sec: 431.3 }
             },
             {
-              name: "adapter_r16",
+              name: "candidate_condition_b",
               condition_type: "peft_adapter_instruction_tuned",
               evaluation: {
                 benchmark_task_a: { accuracy: 0.265625 },
@@ -3849,7 +3849,7 @@ describe("objective metric propagation", () => {
               direction: "higher_better"
             },
             {
-              metric: "accuracy_delta_vs_locked_tuned_baseline=primary_mean_zero_shot_accuracy-condition - primary_mean_zero_shot_accuracy-standard_adapter_rank16_alpha32_dropout005_q_v_baseline",
+              metric: "accuracy_delta_vs_locked_tuned_baseline=primary_mean_zero_shot_accuracy-condition - primary_mean_zero_shot_accuracy-baseline_condition_locked",
               baseline: null,
               comparator: null,
               delta: null,
@@ -4113,7 +4113,7 @@ describe("objective metric propagation", () => {
           causal_mechanism: "More adapter capacity can fit the small instruction-tuning signal.",
           single_change: "adapter rank",
           confounded: false,
-          expected_metric_effect: "Higher average accuracy than locked rank=8 baseline",
+          expected_metric_effect: "Higher average accuracy than the locked baseline condition",
           abort_condition: "Abort if required conditions do not complete.",
           keep_or_discard_rule: "Keep if the best tuned condition improves by at least one point.",
           baselines: ["baseline_condition"],
@@ -4259,7 +4259,7 @@ describe("objective metric propagation", () => {
           causal_mechanism: "Adapter configuration affects instruction-tuning transfer.",
           single_change: "condition-parameter grid",
           confounded: false,
-          expected_metric_effect: "Higher average accuracy than locked rank=8 baseline",
+          expected_metric_effect: "Higher average accuracy than the locked baseline condition",
           abort_condition: "Abort if required baseline or comparator rows are missing.",
           keep_or_discard_rule: "Keep only with populated baseline/comparator evidence.",
           baselines: ["baseline_condition"],

@@ -2579,7 +2579,10 @@ function emitProgress(
   if (!text) {
     return;
   }
-  onProgress?.(event.type === "delta" ? `${label}> ${text}` : text);
+  if (event.type === "delta") {
+    return;
+  }
+  onProgress?.(text || `${label} progress updated.`);
 }
 
 

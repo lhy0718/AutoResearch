@@ -1555,7 +1555,7 @@ function readerFacingParagraphTopicKey(headingKey: string, paragraph: string): s
     if (/\bcondition grid\b|\bscreening result\b|\bscreening comparison\b|\bfollow-up candidate\b/.test(text)) return "results:screening";
     if (/\bcondition table\b|\btable 1\b|\bcomparison surface\b|\bbaseline label\b/.test(text)) return "results:table";
     if (/\bleading condition\b|\bbaseline-relative average-accuracy gain\b|\bleading observed condition\b/.test(text)) return "results:leading";
-    if (/\bbenchmark_task_b\b/.test(text) && /\barc-challenge\b/.test(text) && /\bunchanged\b/.test(text)) return "results:task_split";
+    if (/\bbenchmark_task_b\b/.test(text) && /\bbenchmark task a\b/.test(text) && /\bunchanged\b/.test(text)) return "results:task_split";
     if (/\btraining loss\b/.test(text)) return "results:train_loss";
     if (/\bconfidence interval\b|\bwide\b.*\boverlapping\b|\binterval\b/.test(text)) return "results:uncertainty";
     if (/\bwall-clock\b|\bpeak cuda memory\b|\bcomputational footprint\b/.test(text)) return "results:resources";

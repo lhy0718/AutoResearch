@@ -35,6 +35,36 @@ describe("objectiveMetric", () => {
     expect(evaluation.summary).toContain("< 200");
   });
 
+  it("treats an explicit zero-valued top-level preferred metric as not met rather than missing", () => {
+    const evaluation = evaluateObjectiveMetric(
+      {
+        accuracy_delta_vs_baseline: 0,
+        primary_metric_key: "accuracy_delta_vs_baseline",
+        primary_metric_value: 0,
+        average_accuracy: 0.56
+      },
+      {
+        source: "llm",
+        raw: "Average accuracy gain over baseline should be at least one point.",
+        primaryMetric: "accuracy_delta_vs_baseline",
+        preferredMetricKeys: [
+          "accuracy_delta_vs_baseline",
+          "accuracy_improvement_over_baseline",
+          "average_accuracy",
+          "train_loss"
+        ],
+        direction: "maximize",
+        comparator: ">=",
+        targetValue: 0.01
+      },
+      "Average accuracy gain over baseline should be at least one point."
+    );
+
+    expect(evaluation.status).toBe("not_met");
+    expect(evaluation.matchedMetricKey).toBe("accuracy_delta_vs_baseline");
+    expect(evaluation.observedValue).toBe(0);
+  });
+
   it("reports missing metrics when the preferred key is absent", () => {
     const profile = buildHeuristicObjectiveMetricProfile("f1 at least 0.8");
     const evaluation = evaluateObjectiveMetric(
@@ -387,12 +417,12 @@ describe("objectiveMetric", () => {
           type: "locked_untuned_baseline",
           evaluation: { primary_mean_accuracy: 0.525 }
         },
-        adapter_r16: {
+        candidate_condition_b: {
           type: "peft_adapter_instruction_tuned",
           evaluation: { primary_mean_accuracy: 0.4875 },
           train: { trainable_params: 2252800 }
         },
-        adapter_r8: {
+        candidate_condition_a: {
           type: "peft_adapter_instruction_tuned",
           evaluation: { primary_mean_accuracy: 0.5125 },
           train: { trainable_params: 1126400 }
@@ -425,12 +455,12 @@ describe("objectiveMetric", () => {
             type: "locked_untuned_baseline",
             evaluation: { primary_mean_accuracy: 0.525 }
           },
-          adapter_r16: {
+          candidate_condition_b: {
             type: "peft_adapter_instruction_tuned",
             evaluation: { primary_mean_accuracy: 0.4875 },
             train: { trainable_params: 2252800 }
           },
-          adapter_r8: {
+          candidate_condition_a: {
             type: "peft_adapter_instruction_tuned",
             evaluation: { primary_mean_accuracy: 0.5125 },
             train: { trainable_params: 1126400 }
@@ -593,7 +623,7 @@ describe("objectiveMetric", () => {
             evaluation: { mean_zero_shot_accuracy: 0.40234375 }
           },
           {
-            name: "adapter_r8",
+            name: "candidate_condition_a",
             condition_type: "peft_adapter_instruction_tuned",
             evaluation: { mean_zero_shot_accuracy: 0.3984375 }
           }
@@ -630,8 +660,8 @@ describe("objectiveMetric", () => {
         best_vs_baseline_bootstrap_delta_ci: { delta_mean: 0, ci_low: 0, ci_high: 0 },
         results: [
           { recipe: "baseline_no_tuning", kind: "baseline", mean_zero_shot_accuracy: 0.36458333333333337 },
-          { recipe: "adapter_r8", kind: "adapter", mean_zero_shot_accuracy: 0.34375 },
-          { recipe: "adapter_r16", kind: "adapter", mean_zero_shot_accuracy: 0.34375 }
+          { recipe: "candidate_condition_a", kind: "adapter", mean_zero_shot_accuracy: 0.34375 },
+          { recipe: "candidate_condition_b", kind: "adapter", mean_zero_shot_accuracy: 0.34375 }
         ]
       },
       profile,

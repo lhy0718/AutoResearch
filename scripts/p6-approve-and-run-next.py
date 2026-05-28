@@ -10,6 +10,7 @@ import sys
 import tempfile
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -27,12 +28,15 @@ LIVE_INTERACTIVE_PROMPT_PATTERN = (
 )
 READY_PATTERN = (
     r"(needs_approval|running|pending|Canceled by user|"
+    r"[a-z_]+ failed\s*[·|]|"
     r"Add steering, or wait for the next (?:run or )?approval\.|"
     r"Research Brief workflow is ready)"
 )
 DOCTOR_READY_PATTERN = r"(\[(OK|ATTN)\] readiness:|runs-dir-write:|codex-research-backend-model:|workspace-config:)"
 STOP_BOUNDARY_STABLE_SECONDS = 2.0
 HANDOFF_GRACE_SECONDS = 5.0
+MAX_TRANSCRIPT_CHARS = 2_000_000
+MAX_SEARCH_CHARS = 200_000
 
 
 class WaitTimeout(Exception):
@@ -42,11 +46,20 @@ class WaitTimeout(Exception):
         self.transcript = transcript
 
 
+def append_bounded(text: str, chunk: str, limit: int) -> str:
+    if limit <= 0:
+        return ""
+    updated = text + chunk
+    if len(updated) <= limit:
+        return updated
+    return updated[-limit:]
+
+
 def wait_for(fd: int, pattern: str, timeout: float, buffer_text: str, *, search_existing: bool = True) -> str:
     deadline = time.time() + timeout
     regex = re.compile(pattern, re.MULTILINE)
-    joined = buffer_text
-    searchable = buffer_text if search_existing else ""
+    joined = buffer_text[-MAX_TRANSCRIPT_CHARS:]
+    searchable = joined[-MAX_SEARCH_CHARS:] if search_existing else ""
     if search_existing and regex.search(searchable):
         return joined
     while time.time() < deadline:
@@ -60,8 +73,8 @@ def wait_for(fd: int, pattern: str, timeout: float, buffer_text: str, *, search_
         if not data:
             break
         chunk = data.decode("utf-8", errors="ignore")
-        joined += chunk
-        searchable += chunk
+        joined = append_bounded(joined, chunk, MAX_TRANSCRIPT_CHARS)
+        searchable = append_bounded(searchable, chunk, MAX_SEARCH_CHARS)
         if regex.search(searchable):
             return joined
     print(f"FAIL: pattern not found before timeout: {pattern}")
@@ -115,6 +128,68 @@ def try_load_run_record(workspace: Path, run_id: str) -> dict | None:
         return json.loads(record_path.read_text(encoding="utf-8"))
     except Exception:
         return None
+
+
+def write_json_atomic(path: Path, payload: dict) -> None:
+    tmp_path = path.with_name(f".{path.name}.tmp-{os.getpid()}")
+    tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp_path, path)
+
+
+def iso_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def persist_helper_timeout_boundary(workspace: Path, run_id: str, node: str, message: str) -> bool:
+    run_dir = workspace / ".autolabos" / "runs" / run_id
+    record_path = run_dir / "run_record.json"
+    try:
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    if current_node(record) != node:
+        return False
+    state = node_state(record, node)
+    if record.get("status") != "running" or state.get("status") != "running":
+        return False
+    now = iso_now()
+    record["status"] = "paused"
+    record["updatedAt"] = now
+    record["latestSummary"] = message
+    graph = record.setdefault("graph", {})
+    node_states = graph.setdefault("nodeStates", {})
+    node_states[node] = {
+        **state,
+        "status": "failed",
+        "updatedAt": now,
+        "lastError": message,
+        "note": message,
+    }
+    write_json_atomic(record_path, record)
+    status_path = run_dir / node / "status.json"
+    if status_path.exists():
+        try:
+            status_record = json.loads(status_path.read_text(encoding="utf-8"))
+        except Exception:
+            status_record = {}
+        status_record.update({
+            "status": "failed",
+            "stage": "p6_helper_timeout",
+            "message": message,
+            "lastError": message,
+            "updatedAt": now,
+        })
+        write_json_atomic(status_path, status_record)
+    diagnostic_path = run_dir / node / "p6_helper_timeout.json"
+    diagnostic_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json_atomic(diagnostic_path, {
+        "status": "failed",
+        "reason": "p6_helper_timeout",
+        "node": node,
+        "message": message,
+        "updatedAt": now,
+    })
+    return True
 
 
 def node_status(record: dict, node: str) -> str:
@@ -265,11 +340,13 @@ def should_accept_text_stop_boundary(
     node: str,
     initial_signature: tuple[str, str, str, str] | None
 ) -> bool:
-    # Resumed TUI sessions can replay older "Node X failed" lines.  Text is
-    # only authoritative when persisted state is unavailable or confirms a
-    # fresh boundary for the target node.
+    # Resumed TUI sessions can replay older "Node X failed" lines. If a run
+    # record was available when observation started, a temporary read miss
+    # during a write must not promote terminal text into an accepted boundary;
+    # otherwise the helper may send /quit while the node is still persisting
+    # completion and turn a completed node into "Canceled by user".
     if record is None:
-        return True
+        return initial_signature is None
     return has_fresh_record_stop_boundary(record, node, initial_signature)
 
 
@@ -351,7 +428,7 @@ def wait_for_stop_boundary(
 ) -> str:
     deadline = time.time() + timeout
     regex = re.compile(pattern, re.MULTILINE)
-    joined = buffer_text
+    joined = buffer_text[-MAX_TRANSCRIPT_CHARS:]
     searchable = ""
     searchable_after_target_running = ""
     candidate_signature: tuple[str, str, str, str] | None = None
@@ -389,10 +466,10 @@ def wait_for_stop_boundary(
         if not data:
             break
         chunk = data.decode("utf-8", errors="ignore")
-        joined += chunk
-        searchable += chunk
+        joined = append_bounded(joined, chunk, MAX_TRANSCRIPT_CHARS)
+        searchable = append_bounded(searchable, chunk, MAX_SEARCH_CHARS)
         if observed_target_running:
-            searchable_after_target_running += chunk
+            searchable_after_target_running = append_bounded(searchable_after_target_running, chunk, MAX_SEARCH_CHARS)
         if observed_target_running and has_node_status_error_stop_text(searchable_after_target_running, node):
             record = try_load_run_record(workspace, run_id)
             if should_accept_node_status_error_text(record, node, initial_signature):
@@ -545,6 +622,46 @@ def run_selftest() -> int:
                 return 1
         finally:
             handoff_writer.join(timeout=1.0)
+    with tempfile.TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir)
+        timeout_run_id = "timeout-boundary"
+        timeout_node = "implement_experiments"
+        record_dir = workspace / ".autolabos" / "runs" / timeout_run_id
+        record_dir.mkdir(parents=True)
+        (record_dir / timeout_node).mkdir(parents=True)
+        (record_dir / "run_record.json").write_text(json.dumps({
+            "status": "running",
+            "currentNode": timeout_node,
+            "graph": {
+                "currentNode": timeout_node,
+                "nodeStates": {
+                    timeout_node: {"status": "running", "updatedAt": "before"},
+                }
+            },
+        }), encoding="utf-8")
+        (record_dir / timeout_node / "status.json").write_text(json.dumps({
+            "status": "running",
+            "stage": "codex",
+            "message": "before",
+        }), encoding="utf-8")
+        if not persist_helper_timeout_boundary(workspace, timeout_run_id, timeout_node, "helper timeout"):
+            print("FAIL: helper timeout boundary was not persisted")
+            return 1
+        timeout_record = json.loads((record_dir / "run_record.json").read_text(encoding="utf-8"))
+        timeout_state = timeout_record["graph"]["nodeStates"][timeout_node]
+        timeout_status = json.loads((record_dir / timeout_node / "status.json").read_text(encoding="utf-8"))
+        if timeout_record.get("status") != "paused" or timeout_state.get("status") != "failed":
+            print("FAIL: helper timeout boundary did not pause and fail the running node")
+            return 1
+        if timeout_status.get("status") != "failed" or timeout_status.get("stage") != "p6_helper_timeout":
+            print("FAIL: helper timeout boundary did not close the node status file")
+            return 1
+        if timeout_state.get("lastError") != "helper timeout":
+            print("FAIL: helper timeout boundary did not preserve the diagnostic")
+            return 1
+        if not (record_dir / timeout_node / "p6_helper_timeout.json").exists():
+            print("FAIL: helper timeout diagnostic artifact was not written")
+            return 1
     if not should_observe_active_running(analyze_running, force_run_active=False):
         print("FAIL: active-running run was not selected for observation")
         return 1
@@ -653,6 +770,12 @@ def run_selftest() -> int:
     ):
         print("FAIL: node-local status-error stop text matched an active-run prompt")
         return 1
+    if not should_accept_text_stop_boundary(None, "design_experiments", None):
+        print("FAIL: missing persisted record did not allow a text stop boundary before observation")
+        return 1
+    if should_accept_text_stop_boundary(None, "design_experiments", ("running", "design_experiments", "running", "before")):
+        print("FAIL: transient run-record read miss accepted a text boundary after observation began")
+        return 1
     if not re.search(LIVE_INTERACTIVE_PROMPT_PATTERN, "Add steering, or wait for the next approval."):
         print("FAIL: live interactive prompt pattern did not match current guidance")
         return 1
@@ -670,6 +793,9 @@ def run_selftest() -> int:
         return 1
     if not re.search(READY_PATTERN, "Add steering, or wait for the next run or approval."):
         print("FAIL: ready pattern did not preserve older paused/failure guidance")
+        return 1
+    if not re.search(READY_PATTERN, "PgUp/PgDn scroll · implement_experiments failed · workspace"):
+        print("FAIL: ready pattern did not match failed-node interactive footer")
         return 1
     if not re.search(DOCTOR_READY_PATTERN, "+ [OK] codex-research-backend-model: configured"):
         print("FAIL: doctor ready pattern did not match current doctor output")
@@ -772,6 +898,7 @@ def main() -> int:
     os.close(slave_fd)
 
     buffer_text = ""
+    wait_node = next_node
     sent_command_override = False
     sent_text_command_override = False
     try:
@@ -874,6 +1001,9 @@ def main() -> int:
             buffer_text = exc.transcript
     except WaitTimeout as exc:
         output_path.write_text(exc.transcript, encoding="utf-8")
+        timeout_message = f"P6 helper timed out waiting for {wait_node} stop boundary after {int(timeout)} seconds."
+        if persist_helper_timeout_boundary(workspace, run_id, wait_node, timeout_message):
+            print(f"INFO: persisted helper-timeout boundary for {wait_node}.")
         print(f"FAIL: P6 continue timed out waiting for {exc.pattern}; output={output_path}")
         return 1
     finally:

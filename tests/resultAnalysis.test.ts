@@ -4,6 +4,55 @@ import { buildResultsTableValidation } from "../src/core/nodes/analyzeResults.js
 import { buildAnalysisReport } from "../src/core/resultAnalysis.js";
 
 describe("resultAnalysis", () => {
+  it("keeps mean_score focused on score metrics instead of resource counters", () => {
+    const report = buildAnalysisReport({
+      run: {
+        objectiveMetric: "Improve the candidate score over the locked baseline."
+      },
+      metrics: {
+        accuracy_delta_vs_baseline: 0,
+        baseline_mean_accuracy: 1,
+        best_mean_accuracy: 1,
+        total_max_memory_allocated_bytes: 9747127296,
+        completed_run_count: 27,
+        planned_run_count: 27,
+        wall_clock_seconds: 123.4
+      },
+      objectiveProfile: {
+        source: "llm",
+        raw: "Improve the candidate score over the locked baseline.",
+        primaryMetric: "accuracy_delta_vs_baseline",
+        preferredMetricKeys: ["accuracy_delta_vs_baseline", "mean_accuracy"],
+        comparator: ">=",
+        targetValue: 0.01,
+        targetDescription: "Accuracy should improve by at least one point.",
+        analysisFocus: [],
+        paperEmphasis: [],
+        assumptions: []
+      },
+      objectiveEvaluation: {
+        rawObjectiveMetric: "Improve the candidate score over the locked baseline.",
+        profileSource: "llm",
+        primaryMetric: "accuracy_delta_vs_baseline",
+        preferredMetricKeys: ["accuracy_delta_vs_baseline", "mean_accuracy"],
+        matchedMetricKey: "accuracy_delta_vs_baseline",
+        comparator: ">=",
+        targetValue: 0.01,
+        observedValue: 0,
+        status: "not_met",
+        summary: "Objective metric not met: accuracy_delta_vs_baseline=0 does not satisfy >= 0.01."
+      }
+    });
+
+    expect(report.mean_score).toBe(0.6667);
+    expect(report.metric_table).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "total_max_memory_allocated_bytes", value: 9747127296 }),
+        expect.objectContaining({ key: "wall_clock_seconds", value: 123.4 })
+      ])
+    );
+  });
+
   it("projects node-owned metrics.results rows into baseline/comparator condition comparisons", () => {
     const report = buildAnalysisReport({
       run: {
@@ -93,7 +142,7 @@ describe("resultAnalysis", () => {
         objectiveMetric: "Improve mean zero-shot accuracy over the locked adapter baseline."
       },
       metrics: {
-        best_tuned_condition_id: "adapter_r16_attention_mlp",
+        best_tuned_condition_id: "candidate_condition_b",
         result_rows: [
           {
             condition_id: "reference_base_model",
@@ -104,7 +153,7 @@ describe("resultAnalysis", () => {
             benchmark_task_a_accuracy: 0.246094
           },
           {
-            condition_id: "locked_adapter_baseline_r8",
+            condition_id: "locked_baseline_condition",
             recipe_type: "locked_baseline",
             is_locked_adapter_baseline: true,
             mean_zero_shot_accuracy_benchmark_tasks: 0.304353,
@@ -112,7 +161,7 @@ describe("resultAnalysis", () => {
             benchmark_task_a_accuracy: 0.276147
           },
           {
-            condition_id: "adapter_r16_attention_mlp",
+            condition_id: "candidate_condition_b",
             recipe_type: "candidate",
             mean_zero_shot_accuracy_benchmark_tasks: 0.313533,
             benchmark_task_b_accuracy: 0.342223,
@@ -147,7 +196,7 @@ describe("resultAnalysis", () => {
     });
 
     expect(report.condition_comparisons[0]).toMatchObject({
-      id: "adapter_r16_attention_mlp_vs_locked_adapter_baseline_r8",
+      id: "candidate_condition_b_vs_locked_baseline_condition",
       source: "metrics.result_rows"
     });
     expect(report.condition_comparisons[0]?.metrics).toEqual(
@@ -193,8 +242,8 @@ describe("resultAnalysis", () => {
             },
             wall_time_sec: 8.6
           },
-          adapter_r8: {
-            recipe: "adapter_r8",
+          candidate_condition_a: {
+            recipe: "candidate_condition_a",
             evaluation: {
               mean_zero_shot_accuracy: 0.5,
               per_benchmark_accuracy: {
@@ -281,7 +330,7 @@ describe("resultAnalysis", () => {
             training_wall_time_sec: 0
           },
           {
-            name: "adapter_r8",
+            name: "candidate_condition_a",
             benchmark_task_a_accuracy: 0.2734375,
             benchmark_task_b_accuracy: 0.5234375,
             mean_zero_shot_accuracy: 0.3984375,
@@ -300,7 +349,7 @@ describe("resultAnalysis", () => {
             training: { trainable_params: 0, wall_time_sec: 0 }
           },
           {
-            name: "adapter_r8",
+            name: "candidate_condition_a",
             condition_type: "peft_adapter_instruction_tuned",
             evaluation: {
               benchmark_task_a: { accuracy: 0.2734375 },
@@ -337,7 +386,7 @@ describe("resultAnalysis", () => {
     });
 
     expect(report.condition_comparisons[0]).toMatchObject({
-      id: "adapter_r8_vs_base_unmodified",
+      id: "candidate_condition_a_vs_base_unmodified",
       source: "metrics.conditions",
       hypothesis_supported: false
     });

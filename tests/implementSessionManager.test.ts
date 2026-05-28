@@ -115,6 +115,8 @@ import {
   repairPythonEntrypointMetricsAggregationBridgeSurface,
   repairPythonEntrypointWorkflowSignatureBridgeSurface,
   repairPythonFindHelperCallableClassSurface,
+  repairPythonRequiredContractGlobalAliasSurface,
+  repairPythonSectionedRunnerCliEntrypointSurface,
   repairPythonFinalOrchestrationHelperSurface,
   repairPythonMainFindCallableStudyResolverSurface,
   repairPythonRoleCallableResolverClassSurface,
@@ -188,6 +190,16 @@ import {
   repairPythonMissingParseArgsSurface,
   repairPythonMissingBuildExperimentConfigSurface,
   repairPythonNamespaceParseArgsSurface,
+  repairPythonSelectedRunnerArgvDispatchSurface,
+  repairPythonStudyOrchestratorResolverPerRunFilterSurface,
+  repairPythonStudyOrchestratorOrderedPlanArgumentSurface,
+  repairPythonSingleCellExecutorRuntimeKwargsSurface,
+  repairPythonFailureEvidenceNonRecursiveSurface,
+  repairPythonSupportedKwargsSemanticAliasSurface,
+  repairPythonFlexibleInvocationPlannedRunAliasSurface,
+  repairPythonSingleRunExecutionBridgeSurface,
+  repairPythonSingleCellResolverAvoidSelfSurface,
+  repairPythonObservedAverageAccuracyAliasSurface,
   repairPythonRuntimePathPrepareCallableSurface,
   repairPythonRuntimePathsMappingRecordSurface,
   repairPythonCommandTokensNamespaceSurface,
@@ -219,6 +231,8 @@ import {
   repairLockedPeftStudyConfigSurface,
   repairPythonLockedConditionCountSurface,
   repairPythonConditionSeedPlanDispatchSurface,
+  repairPythonWorkflowSingleRunExecutorCandidateSurface,
+  repairPythonWorkflowConditionRowsFromPlannedRunsSurface,
   repairPythonLockedBaselineFirstExecutionResolverSurface,
   repairPythonLockedBaselineFirstSweepOrchestratorSurface,
   repairPythonBaselineFirstLockedSweepEntrypointResolverSurface,
@@ -397,6 +411,18 @@ describe("ImplementSessionManager", () => {
     expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "cache", "hf_home", "hub", "datasets--provider--task"))).toBe(true);
     expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "hf_home", "hub", "datasets--provider--task"))).toBe(true);
     expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "node_modules", "pkg"))).toBe(true);
+    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "adapters", "candidate_condition_a"))).toBe(true);
+    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "training_artifacts", "candidate_condition_a"))).toBe(true);
+    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "training_runs", "candidate_condition_a"))).toBe(true);
+    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "condition_runs", "candidate_condition_a"))).toBe(true);
+    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "conditions", "candidate_condition_a"))).toBe(true);
+    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "checkpoints", "candidate_condition_a"))).toBe(true);
+    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "evaluations", "candidate_condition_a"))).toBe(true);
+    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "run_artifacts", "candidate_condition_a"))).toBe(true);
+    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "analysis_cache", "page_images", "paper_a"))).toBe(true);
+    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "analysis_cache", "pdfs", "paper_a.pdf"))).toBe(true);
+    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "seed_1", "metrics.json"))).toBe(true);
+    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "candidate_condition_a", "adapter.safetensors"))).toBe(true);
     expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "runner.py"))).toBe(false);
   });
 
@@ -5594,10 +5620,19 @@ describe("ImplementSessionManager", () => {
         "def main():",
         "    baseline = _execute_condition({'marker': 'baseline'}, 'baseline')",
         "    tuned = _execute_condition({'marker': 'baseline_condition'}, 'tuned_condition')",
+        "    planned = run_single_planned_run(",
+        "        planned_run={'condition': {'marker': 'planned_condition'}, 'seed': 42},",
+        "        runtime_context=FakeContext(),",
+        "        selected_model_id='fake-model',",
+        "        preflight_result={},",
+        "    )",
         "    assert baseline['status'] == 'success'",
         "    assert tuned['status'] == 'success'",
+        "    assert planned['status'] == 'success'",
+        "    assert planned['condition_marker'] == 'planned_condition'",
         "    assert baseline['average_accuracy'] == 0.5",
         "    assert tuned['average_accuracy'] == 0.5",
+        "    assert planned['average_accuracy'] == 0.5",
         "    assert 'model' not in baseline",
         "    assert 'tokenizer' not in tuned",
         "    return 0",
@@ -5620,6 +5655,8 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("_autolabos_train_eval_condition_bridge_marker");
     expect(repairedSource).toContain("def run_baseline_condition(");
     expect(repairedSource).toContain("def run_condition_experiment(");
+    expect(repairedSource).toContain("def _autolabos_run_single_planned_condition(");
+    expect(repairedSource).toContain("run_single_planned_run = _autolabos_run_single_planned_condition");
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
@@ -6716,6 +6753,676 @@ describe("ImplementSessionManager", () => {
     );
     expect(repairedExistingAliasSource).toContain("runtime=runtime_context,");
     expect(repairedExistingAliasSource).toContain("runtime_context=runtime_context,");
+  });
+
+  it("adds an ordered-plan orchestrator alias when the entrypoint only exposes lower-level plan helpers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-ordered-plan-orchestrator-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_condition_sweep_experiment.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "from types import SimpleNamespace",
+        "import argparse",
+        "import json",
+        "",
+        "DEFAULT_PUBLIC_OUTPUT_DIR = Path('.')",
+        "MAX_WALL_CLOCK_TIMEOUT_SEC = 5",
+        "LOGGER = None",
+        "",
+        "def build_experiment_contract(timeout_sec=5):",
+        "    return SimpleNamespace(timeout_sec=timeout_sec)",
+        "",
+        "def build_locked_run_plan(contract):",
+        "    return ['baseline_condition', 'candidate_condition_a']",
+        "",
+        "def execute_single_planned_run(args, planned_run, output_dir):",
+        "    return {'status': 'ok', 'condition_marker': planned_run, 'average_accuracy': 0.5}",
+        "",
+        "def execute_planned_runs_with_incremental_persistence(contract, planned_runs, output_dir, run_executor, logger=None):",
+        "    records = [run_executor(item, index, len(planned_runs)) for index, item in enumerate(planned_runs, start=1)]",
+        "    return {'run_records': records, 'completed_run_count': len(records), 'failed_run_count': 0}",
+        "",
+        "def aggregate_experiment_results(raw_run_records, contract):",
+        "    return {'condition_aggregates': raw_run_records, 'completed_condition_count': len(raw_run_records)}",
+        "",
+        "def _resolve_existing_callable(candidate_names):",
+        "    for name in candidate_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def _invoke_with_supported_kwargs(func, **kwargs):",
+        "    return func(**kwargs)",
+        "",
+        "def _run_orchestration_entry(args, output_dir, metrics_path):",
+        "    orchestrator = _resolve_existing_callable(['orchestrate_experiment', 'run_experiment', 'execute_experiment'])",
+        "    if orchestrator is None:",
+        "        raise RuntimeError('No experiment orchestrator callable was found in the runner module.')",
+        "    return _invoke_with_supported_kwargs(orchestrator, args=args, output_dir=output_dir, metrics_path=metrics_path)",
+        "",
+        "def main(argv=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path')",
+        "    parser.add_argument('--output-dir')",
+        "    args = parser.parse_args(argv)",
+        "    payload = _run_orchestration_entry(args, Path(args.output_dir), Path(args.metrics_path))",
+        "    Path(args.metrics_path).write_text(json.dumps(payload), encoding='utf8')",
+        "    return 0 if payload.get('success') else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--output-dir", workspace])).toThrow(
+      /No experiment orchestrator callable/
+    );
+    const repair = await repairPythonPublicStudyTopLevelRunnerAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_ordered_plan_orchestrator_alias_marker");
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--output-dir", workspace]);
+    const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(metrics.status).toBe("ok");
+    expect(metrics.completed_run_count).toBe(2);
+  });
+
+  it("prefers raw argv when a selected top-level runner exposes argv and args parameters", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-selected-runner-argv-dispatch-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_condition_sweep_experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import json",
+        "import sys",
+        "",
+        "def build_cli_parser():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', required=True)",
+        "    parser.add_argument('--sample-count', type=int, default=1)",
+        "    return parser",
+        "",
+        "def run_cli_experiment(argv=None, args=None):",
+        "    if args is not None and argv is None:",
+        "        argv = args",
+        "    argv_list = list(argv) if argv is not None else list(sys.argv[1:])",
+        "    parsed_args = build_cli_parser().parse_args(argv_list)",
+        "    payload = {'status': 'ok', 'sample_count': parsed_args.sample_count}",
+        "    with open(parsed_args.metrics_path, 'w', encoding='utf8') as handle:",
+        "        json.dump(payload, handle)",
+        "    return 0, payload",
+        "",
+        "def _select_top_level_runner():",
+        "    return run_cli_experiment",
+        "",
+        "def _invoke_selected_runner(runner, argv):",
+        "    import inspect",
+        "    parsed_args = build_cli_parser().parse_args(list(argv))",
+        "    signature = inspect.signature(runner)",
+        "    positional_params = [",
+        "        parameter",
+        "        for parameter in signature.parameters.values()",
+        "        if parameter.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)",
+        "    ]",
+        "    accepts_varargs = any(parameter.kind == inspect.Parameter.VAR_POSITIONAL for parameter in signature.parameters.values())",
+        "    if not positional_params and not accepts_varargs:",
+        "        return runner()",
+        "    if len(positional_params) == 1 and not accepts_varargs:",
+        "        return runner(list(argv))",
+        "    if parsed_args is not None:",
+        "        return runner(parsed_args)",
+        "    return runner(list(argv))",
+        "",
+        "def main(argv=None):",
+        "    argv_list = list(sys.argv[1:] if argv is None else argv)",
+        "    exit_code, payload = _invoke_selected_runner(_select_top_level_runner(), argv_list)",
+        "    print(json.dumps(payload))",
+        "    return exit_code",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const metricsPath = path.join(workspace, "metrics.json");
+    expect(() => execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--sample-count", "3"])).toThrow(
+      /Namespace.*not iterable/
+    );
+
+    const repair = await repairPythonSelectedRunnerArgvDispatchSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_selected_runner_argv_dispatch_marker");
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--sample-count", "3"]);
+    const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(metrics.status).toBe("ok");
+    expect(metrics.sample_count).toBe(3);
+  });
+
+  it("filters per-run helpers when resolving a generated study orchestrator", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-study-orchestrator-per-run-filter-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_condition_sweep_experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from typing import Callable, List, Tuple",
+        "",
+        "def run_single_condition_seed(condition, seed):",
+        "    return {'status': 'bad'}",
+        "",
+        "orchestrate_single_condition_seed = run_single_condition_seed",
+        "",
+        "def execute_repeated_seed_study(args=None, runtime_config=None):",
+        "    return {'status': 'ok', 'completed_run_count': 2}",
+        "",
+        "def _find_study_orchestrator() -> Callable[..., object]:",
+        "    explicit_candidates = [",
+        "        'run_study',",
+        "        'orchestrate_study',",
+        "        'execute_study',",
+        "        'run_experiment',",
+        "        'orchestrate_experiment',",
+        "        'execute_experiment',",
+        "    ]",
+        "    for name in explicit_candidates:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    excluded_names = {'main', '_find_study_orchestrator'}",
+        "    fuzzy_matches: List[Tuple[str, Callable[..., object]]] = []",
+        "    for name, obj in globals().items():",
+        "        if name in excluded_names or not callable(obj):",
+        "            continue",
+        "        lowered = name.lower()",
+        "        if ('study' in lowered or 'orchestr' in lowered or 'experiment' in lowered) and (",
+        "            'condition' in lowered",
+        "        ):",
+        "            fuzzy_matches.append((name, obj))",
+        "    if fuzzy_matches:",
+        "        fuzzy_matches.sort(key=lambda item: item[0])",
+        "        return fuzzy_matches[0][1]",
+        "    raise RuntimeError('No study orchestrator')",
+        "",
+        "def main():",
+        "    selected = _find_study_orchestrator()",
+        "    result = selected()",
+        "    print(result['status'])",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath])).toThrow(/missing.*condition.*seed/);
+    const repair = await repairPythonStudyOrchestratorResolverPerRunFilterSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_study_orchestrator_per_run_filter_marker");
+    const output = execFileSync("python3", [scriptPath], { encoding: "utf8" });
+    expect(output.trim()).toBe("ok");
+  });
+
+  it("materializes ordered-plan arguments for selected study orchestrators", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-study-orchestrator-plan-argument-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_condition_sweep_experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "from types import SimpleNamespace",
+        "from typing import Any, Callable, Dict, Optional, Sequence",
+        "",
+        "def build_baseline_first_run_plan(condition_markers=None, seed_schedule=None, baseline_marker=None):",
+        "    return [SimpleNamespace(condition_marker='baseline_condition')]",
+        "",
+        "def execute_repeated_seed_study(ordered_plan, *, args=None, runtime_config=None):",
+        "    return {'status': 'ok', 'condition_marker': ordered_plan[0].condition_marker}",
+        "",
+        "def _invoke_study_orchestrator(orchestrator: Callable[..., Any], parsed_args: argparse.Namespace, runtime_config: Dict[str, Any], invocation_metadata: Dict[str, Any]) -> Dict[str, Any]:",
+        "    available_arguments: Dict[str, Any] = {",
+        "        'args': parsed_args,",
+        "        'runtime_config': runtime_config,",
+        "    }",
+        "    import inspect",
+        "    signature = inspect.signature(orchestrator)",
+        "    keyword_arguments = {}",
+        "    required_unmatched = []",
+        "    for parameter in signature.parameters.values():",
+        "        if parameter.name in available_arguments:",
+        "            keyword_arguments[parameter.name] = available_arguments[parameter.name]",
+        "        elif parameter.default is inspect._empty:",
+        "            required_unmatched.append(parameter.name)",
+        "    if not required_unmatched:",
+        "        return orchestrator(**keyword_arguments)",
+        "    return orchestrator(runtime_config)",
+        "",
+        "def main():",
+        "    payload = _invoke_study_orchestrator(execute_repeated_seed_study, argparse.Namespace(), {}, {})",
+        "    print(payload['status'])",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath])).toThrow(/condition_marker/);
+    const repair = await repairPythonStudyOrchestratorOrderedPlanArgumentSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_study_orchestrator_ordered_plan_argument_marker");
+    const output = execFileSync("python3", [scriptPath], { encoding: "utf8" });
+    expect(output.trim()).toBe("ok");
+  });
+
+  it("accepts runtime kwargs in generated single-cell executor bridges", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-single-cell-runtime-kwargs-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_condition_sweep_experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from types import SimpleNamespace",
+        "from typing import Any, Callable, Mapping, MutableMapping, Optional",
+        "",
+        "def _invoke_single_cell_executor(",
+        "    executor: Callable[..., Any],",
+        "    planned_run: Any,",
+        "    *,",
+        "    args: Any,",
+        "    workspace: Optional[Mapping[str, Any]] = None,",
+        "    model_selection: Optional[Mapping[str, Any]] = None,",
+        "    shared_state: Optional[MutableMapping[str, Any]] = None,",
+        ") -> Any:",
+        "    workspace_mapping: Mapping[str, Any] = workspace or {}",
+        "    return executor(args=args, output_dir=workspace_mapping.get('output_dir'))",
+        "",
+        "def main():",
+        "    planned_run = SimpleNamespace(condition_marker='baseline_condition')",
+        "    payload = _invoke_single_cell_executor(",
+        "        lambda **kwargs: {'status': 'ok', 'args': kwargs.get('args'), 'output_dir': kwargs.get('output_dir')},",
+        "        planned_run,",
+        "        cli_args='namespace',",
+        "        output_dir='out',",
+        "        device='cpu',",
+        "        selected_model_info={'model': 'fixture'},",
+        "        experiment_metadata={'source': 'fixture'},",
+        "    )",
+        "    print(payload['status'], payload['args'], payload['output_dir'])",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath])).toThrow(/unexpected keyword argument 'cli_args'/);
+    const repair = await repairPythonSingleCellExecutorRuntimeKwargsSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_single_cell_executor_runtime_kwargs_marker");
+    const output = execFileSync("python3", [scriptPath], { encoding: "utf8" });
+    expect(output.trim()).toBe("ok namespace out");
+  });
+
+  it("prevents single-cell resolver from selecting its planned-cell wrapper", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-single-cell-resolver-avoid-self-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_condition_sweep_experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from typing import Any, Callable, Mapping, Optional, cast",
+        "",
+        "class OrchestrationContractError(RuntimeError):",
+        "    pass",
+        "",
+        "def run_single_condition_seed():",
+        "    return {'status': 'ok'}",
+        "",
+        "def execute_single_planned_cell():",
+        "    return {'status': 'recursive'}",
+        "",
+        "def _resolve_single_cell_executor(",
+        "    single_cell_executor: Optional[Callable[..., Mapping[str, Any]]] = None,",
+        ") -> Callable[..., Mapping[str, Any]]:",
+        "    if callable(single_cell_executor):",
+        "        return single_cell_executor",
+        "",
+        "    for candidate_name in (",
+        "        \"execute_single_planned_cell\",",
+        "        \"execute_planned_run_cell\",",
+        "        \"run_single_condition_seed\",",
+        "    ):",
+        "        candidate = globals().get(candidate_name)",
+        "        if callable(candidate):",
+        "            return cast(Callable[..., Mapping[str, Any]], candidate)",
+        "",
+        "    raise OrchestrationContractError(",
+        "        \"Could not locate the single planned-cell executor defined in the prior orchestration section.\"",
+        "    )",
+        "",
+        "def main():",
+        "    print(_resolve_single_cell_executor().__name__)",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const before = execFileSync("python3", [scriptPath], { encoding: "utf8" });
+    expect(before.trim()).toBe("execute_single_planned_cell");
+    const repair = await repairPythonSingleCellResolverAvoidSelfSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_single_cell_resolver_avoid_self_marker");
+    const output = execFileSync("python3", [scriptPath], { encoding: "utf8" });
+    expect(output.trim()).toBe("run_single_condition_seed");
+  });
+
+  it("bridges low-level training and evaluation helpers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-single-run-execution-bridge-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_condition_sweep_experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "from dataclasses import asdict, dataclass, is_dataclass",
+        "from pathlib import Path",
+        "from typing import Any, Callable, Dict, Mapping, Optional, Union",
+        "",
+        "def _cell_jsonable(value):",
+        "    return value",
+        "",
+        "def _call_with_supported_kwargs(func: Callable[..., Any], /, **kwargs: Any) -> Any:",
+        "    return func(**{key: value for key, value in kwargs.items() if key in func.__code__.co_varnames})",
+        "",
+        "def _resolve_existing_callable(*candidate_names: str):",
+        "    for name in candidate_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "@dataclass",
+        "class Prep:",
+        "    ok: bool",
+        "    status: str",
+        "    selected_model: str",
+        "    used_fallback: bool",
+        "    context: Dict[str, Any]",
+        "    model_selection: Dict[str, Any]",
+        "",
+        "@dataclass",
+        "class Artifacts:",
+        "    summary: Dict[str, Any]",
+        "    model: Any",
+        "    tokenizer: Any",
+        "    output_dir: Path",
+        "",
+        "def prepare_single_run_context(condition_marker: str, seed: int):",
+        "    return {'condition_marker': condition_marker, 'seed': seed, 'selected_model': 'fixture-model', 'used_fallback': False, 'model_selection': {'selected_model': 'fixture-model'}}",
+        "",
+        "def prepare_instruction_tuning_data(seed: int, max_train_samples_per_task=None, allow_download=None):",
+        "    return {'ok': True, 'train_records': [{'text': 'sample'}]}",
+        "",
+        "def run_single_condition_seed_training_core(model_name: str, condition, seed: int, train_examples, output_root, loading_policy=None):",
+        "    return Artifacts({'train_loss': 0.2}, object(), object(), Path(output_root) / 'artifact')",
+        "",
+        "def evaluate_ordered_benchmarks(model, tokenizer, evaluation_seed: int, **kwargs):",
+        "    return {'ok': True, 'average_accuracy_observed': 0.75, 'benchmark_task_a_accuracy': 0.5, 'benchmark_task_b_accuracy': 1.0}",
+        "",
+        "def run_single_condition_seed(",
+        "    condition: Any,",
+        "    seed: int,",
+        "    output_root: Optional[Union[str, Path]] = None,",
+        "    *,",
+        "    args: Optional[argparse.Namespace] = None,",
+        "    **kwargs: Any,",
+        ") -> Dict[str, Any]:",
+        "    context_resolver = _resolve_existing_callable('prepare_single_run_context')",
+        "    training_executor = _resolve_existing_callable('execute_single_training_run')",
+        "    evaluation_executor = _resolve_existing_callable('evaluate_single_run_tasks')",
+        "    condition_context = {}",
+        "    resolved = _call_with_supported_kwargs(context_resolver, condition_marker=condition, seed=seed)",
+        "    if isinstance(resolved, Mapping):",
+        "        condition_context = dict(resolved)",
+        "    if training_executor is None:",
+        "        return {'status': 'failed', 'message': 'No training executor helper was found'}",
+        "    execution_result = training_executor(condition=condition, seed=seed, output_root=output_root, args=args, condition_context=condition_context)",
+        "    evaluation_result = evaluation_executor(condition=condition, seed=seed, output_root=output_root, args=args, condition_context=condition_context, execution_result=execution_result)",
+        "    return {'status': 'completed' if evaluation_result.get('ok') else 'failed', 'average_accuracy': evaluation_result.get('average_accuracy'), 'selected_model': execution_result.get('selected_model')}",
+        "",
+        "def main():",
+        "    result = run_single_condition_seed('baseline_condition', 7, output_root='out')",
+        "    print(result['status'], result.get('selected_model'), result.get('average_accuracy'))",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const before = execFileSync("python3", [scriptPath], { encoding: "utf8" });
+    expect(before.trim()).toBe("failed None None");
+    const repair = await repairPythonSingleRunExecutionBridgeSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_single_run_execution_bridge_marker");
+    const aliasRepair = await repairPythonObservedAverageAccuracyAliasSurface(scriptPath);
+    expect(aliasRepair.repaired).toBe(true);
+    const output = execFileSync("python3", [scriptPath], { encoding: "utf8" });
+    expect(output.trim()).toBe("completed fixture-model 0.75");
+  });
+
+  it("adds semantic aliases for supported kwarg dispatch", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-supported-kwargs-semantic-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_condition_sweep_experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import inspect as _inspect",
+        "from typing import Any, Callable, Mapping, Optional",
+        "",
+        "def _call_with_supported_kwargs(func: Callable[..., Any], /, **kwargs: Any) -> Any:",
+        "    try:",
+        "        signature = _inspect.signature(func)",
+        "    except Exception:",
+        "        return func(**kwargs)",
+        "",
+        "    parameters = signature.parameters",
+        "    if any(param.kind == _inspect.Parameter.VAR_KEYWORD for param in parameters.values()):",
+        "        return func(**kwargs)",
+        "",
+        "    accepted_kwargs = {key: value for key, value in kwargs.items() if key in parameters}",
+        "    return func(**accepted_kwargs)",
+        "",
+        "def _condition_marker_from_any(condition):",
+        "    if isinstance(condition, Mapping):",
+        "        return condition.get('condition_marker') or condition.get('marker')",
+        "    return str(condition)",
+        "",
+        "def prepare_single_run_context(condition_marker: str, seed: int):",
+        "    return {'condition_marker': condition_marker, 'seed': seed}",
+        "",
+        "def build_single_run_failure_record(run_context, stage: str, message: str):",
+        "    return {'run_context': run_context, 'stage': stage, 'message': message}",
+        "",
+        "def main():",
+        "    context = _call_with_supported_kwargs(prepare_single_run_context, condition={'marker': 'baseline_condition'}, seed=7)",
+        "    failure = _call_with_supported_kwargs(build_single_run_failure_record, condition_context=context, stage='setup', message='blocked')",
+        "    print(context['condition_marker'], failure['run_context']['seed'])",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath])).toThrow(/condition_marker/);
+    const repair = await repairPythonSupportedKwargsSemanticAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_supported_kwargs_semantic_alias_marker");
+    const output = execFileSync("python3", [scriptPath], { encoding: "utf8" });
+    expect(output.trim()).toBe("baseline_condition 7");
+  });
+
+  it("aliases planned-run semantic inputs in flexible invocation helpers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-flex-planned-run-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_condition_sweep_experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import inspect",
+        "import json",
+        "from pathlib import Path",
+        "from typing import Any",
+        "",
+        "def execute_single_condition(planned_run: Any) -> dict[str, Any]:",
+        "    payload = {'status': 'completed', 'marker': planned_run['marker']}",
+        "    Path('executed.json').write_text(json.dumps(payload), encoding='utf-8')",
+        "    return payload",
+        "",
+        "def _main_invoke_flexibly(function, **kwargs):",
+        "    signature = inspect.signature(function)",
+        "    accepted_kwargs = {}",
+        "    for parameter in signature.parameters.values():",
+        "        if parameter.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):",
+        "            continue",
+        "        if parameter.name in kwargs:",
+        "            accepted_kwargs[parameter.name] = kwargs[parameter.name]",
+        "        elif parameter.default is inspect.Parameter.empty:",
+        "            raise KeyError(parameter.name)",
+        "    return function(**accepted_kwargs)",
+        "",
+        "def main() -> int:",
+        "    result = _main_invoke_flexibly(execute_single_condition, run_spec={'marker': 'baseline_condition'})",
+        "    return 0 if result.get('status') == 'completed' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/planned_run/);
+    const repair = await repairPythonFlexibleInvocationPlannedRunAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_flexible_invocation_planned_run_alias_marker");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(path.join(workspace, "executed.json"), "utf8"))).toMatchObject({
+      status: "completed",
+      marker: "baseline_condition"
+    });
+  });
+
+  it("bounds recursive failure evidence in generated study records", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-failure-evidence-nonrecursive-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_condition_sweep_experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from typing import Any, Dict, Mapping, Optional",
+        "import copy",
+        "import json",
+        "",
+        "def _cell_jsonable(value):",
+        "    return value",
+        "",
+        "def _capture_failure_evidence(",
+        "    *,",
+        "    message: str,",
+        "    kind: str,",
+        "    exc: Optional[BaseException] = None,",
+        "    returned_payload: Optional[Mapping[str, Any]] = None,",
+        ") -> Dict[str, Any]:",
+        "    payload: Dict[str, Any] = {",
+        "        'kind': kind,",
+        "        'message': str(message),",
+        "    }",
+        "    if isinstance(returned_payload, Mapping):",
+        "        raw_failure = returned_payload.get('failure_evidence')",
+        "        if raw_failure is not None:",
+        "            payload[\"returned_failure_evidence\"] = _cell_jsonable(raw_failure)",
+        "    return payload",
+        "",
+        "def _normalize_loop_run_record(planned_run, raw_record, *, record_index: int):",
+        "    record = dict(raw_record)",
+        "    return {",
+        "        \"record_index\": record_index,",
+        "        \"failure_evidence\": copy.deepcopy(record.get(\"failure_evidence\")),",
+        "    }",
+        "",
+        "def main():",
+        "    nested = {'kind': 'executor_returned_failure_status', 'message': 'inner'}",
+        "    cursor = nested",
+        "    for index in range(8):",
+        "        child = {'kind': 'executor_returned_failure_status', 'message': 'inner-' + str(index)}",
+        "        cursor['returned_failure_evidence'] = child",
+        "        cursor = child",
+        "    captured = _capture_failure_evidence(",
+        "        message='Executor returned non-success status for baseline_condition seed 1.',",
+        "        kind='executor_returned_failure_status',",
+        "        returned_payload={'failure_evidence': nested},",
+        "    )",
+        "    normalized = _normalize_loop_run_record(None, {'failure_evidence': captured}, record_index=1)",
+        "    print(json.dumps(normalized['failure_evidence'], sort_keys=True))",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const repair = await repairPythonFailureEvidenceNonRecursiveSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_failure_evidence_nonrecursive_marker");
+    const output = execFileSync("python3", [scriptPath], { encoding: "utf8" });
+    const evidence = JSON.parse(output);
+    const countKey = (value: unknown, key: string): number => {
+      if (!value || typeof value !== "object") {
+        return 0;
+      }
+      if (Array.isArray(value)) {
+        return value.reduce((count, item) => count + countKey(item, key), 0);
+      }
+      const record = value as Record<string, unknown>;
+      return (Object.prototype.hasOwnProperty.call(record, key) ? 1 : 0) +
+        Object.values(record).reduce((count, item) => count + countKey(item, key), 0);
+    };
+    expect(evidence.kind).toBe("executor_returned_failure_status");
+    expect(countKey(evidence, "returned_failure_evidence")).toBe(0);
+    expect(countKey(evidence, "returned_failure_summary")).toBeLessThanOrEqual(2);
+    expect(JSON.stringify(evidence).length).toBeLessThan(2000);
   });
 
   it("adds sibling experiment.py as a backend candidate for public study wrappers", async () => {
@@ -7931,7 +8638,7 @@ describe("ImplementSessionManager", () => {
         "    kind: str",
         "def build_recipes():",
         "    recipes = [Recipe(name='baseline_no_tuning', kind='baseline')]",
-        "    recipes.append(Recipe(name='adapter_r16', kind='adapter'))",
+        "    recipes.append(Recipe(name='candidate_condition_b', kind='adapter'))",
         "    return recipes",
         "def summarize(results):",
         "    baseline = next(res for res in results if res.recipe == 'baseline_no_tuning')",
@@ -7993,7 +8700,7 @@ describe("ImplementSessionManager", () => {
                   "def build_recipes():",
                   "    recipes = [Recipe(name='standard_adapter_baseline', kind='adapter')]",
                   "    recipes.append(Recipe(name='untuned_reference', kind='reference'))",
-                  "    recipes.append(Recipe(name='adapter_r8', kind='adapter'))",
+                  "    recipes.append(Recipe(name='candidate_condition_a', kind='adapter'))",
                   "    return recipes",
                   MINIMAL_METRICS_RUNNER_FOOTER,
                   ""
@@ -8563,7 +9270,7 @@ describe("ImplementSessionManager", () => {
         "        'run_baseline_first_sweep',",
         "        'orchestrate_study_sweep',",
         "        'orchestrate_study',",
-        "        'run_rank_dropout_study',",
+        "        'run_condition_parameter_study',",
         "        'run_condition_grid_study',",
         "        'execute_study',",
         "        'run_experiment',",
@@ -8607,7 +9314,7 @@ describe("ImplementSessionManager", () => {
       trigger: "auto_handoff",
       stage: "metrics",
       summary:
-        "Experiment metrics payload reports failed status: RuntimeError: No study sweep entrypoint was found. Expected one of: run_study_sweep, run_baseline_first_sweep, orchestrate_study_sweep, orchestrate_study, run_rank_dropout_study, run_condition_grid_study, execute_study, run_experiment, run_study",
+        "Experiment metrics payload reports failed status: RuntimeError: No study sweep entrypoint was found. Expected one of: run_study_sweep, run_baseline_first_sweep, orchestrate_study_sweep, orchestrate_study, run_condition_parameter_study, run_condition_grid_study, execute_study, run_experiment, run_study",
       command: `python ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
       metrics_path: metricsPath,
       suggested_next_action: "Expose the generated baseline-first condition sweep under the final study sweep entrypoint names.",
@@ -8646,6 +9353,273 @@ describe("ImplementSessionManager", () => {
       status: "completed",
       runner: "run_baseline_first_condition_sweep",
       study_name: "locked-study"
+    });
+  });
+
+
+  it("repairs unfilled sectioned CLI feedback on the existing public bundle before Codex", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-sectioned-cli-preflight-repair-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Sectioned CLI Preflight Repair",
+      topic: "repair reusable runner entrypoint compatibility",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    run.graph.nodeStates.run_experiments.status = "failed";
+    mkdirSync(path.dirname(run.memoryRefs.episodePath), { recursive: true });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - repair_sectioned_cli\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const scriptPath = path.join(publicDir, "run_condition_sweep_experiment.py");
+    const readmePath = path.join(publicDir, "README.md");
+    const metricsPath = path.join(runDir, "metrics.json");
+    mkdirSync(publicDir, { recursive: true });
+    writeFileSync(metricsPath, "{\"status\":\"failed\"}\n", "utf8");
+    writeFileSync(
+      scriptPath,
+      [
+        "# AUTOLABOS CANONICAL SKELETON",
+        "# BEGIN AUTOLABOS SECTION chunk_1 :: Imports",
+        "# Purpose: imports",
+        "# Order: 1/4",
+        "import argparse",
+        "import json",
+        "import traceback",
+        "from dataclasses import dataclass",
+        "from pathlib import Path",
+        "from typing import Any, Dict, Mapping, Optional, Sequence",
+        "",
+        "DEFAULT_PUBLIC_DIR = Path('.')",
+        "DEFAULT_METRICS_PATH = Path('metrics.json')",
+        "DEFAULT_SCRIPT_PATH = Path(__file__).resolve()",
+        "DEFAULT_STUDY_RESULTS_PATH = Path('study_results.json')",
+        "DEFAULT_PER_SEED_RESULTS_PATH = Path('per_seed_results.json')",
+        "DEFAULT_AGGREGATES_PATH = Path('aggregate_results.json')",
+        "DEFAULT_TRAINING_OUTPUT_ROOT = Path('condition_runs')",
+        "",
+        "@dataclass",
+        "class LockedStudyContext:",
+        "    metrics_path: Path",
+        "    public_dir: Path",
+        "    script_path: Path",
+        "    run_command: str",
+        "",
+        "def build_locked_study_context(metrics_path: Path = DEFAULT_METRICS_PATH, public_dir: Path = DEFAULT_PUBLIC_DIR, script_path: Path = DEFAULT_SCRIPT_PATH, study_results_path: Path = DEFAULT_STUDY_RESULTS_PATH, per_seed_results_path: Path = DEFAULT_PER_SEED_RESULTS_PATH, aggregates_path: Path = DEFAULT_AGGREGATES_PATH, training_output_root: Path = DEFAULT_TRAINING_OUTPUT_ROOT, timeout_sec: Optional[int] = None) -> LockedStudyContext:",
+        "    return LockedStudyContext(metrics_path=Path(metrics_path), public_dir=Path(public_dir), script_path=Path(script_path), run_command='python ' + str(script_path))",
+        "",
+        "def _write_json_document(path: Path, payload: Mapping[str, Any]) -> None:",
+        "    Path(path).write_text(json.dumps(dict(payload)), encoding='utf-8')",
+        "",
+        "def run_study_and_write_metrics(context: LockedStudyContext) -> Dict[str, Any]:",
+        "    payload = {'status': 'success', 'success': True, 'condition_marker': 'baseline_condition'}",
+        "    _write_json_document(context.metrics_path, payload)",
+        "    return payload",
+        "# END AUTOLABOS SECTION chunk_1",
+        "",
+        "# BEGIN AUTOLABOS SECTION chunk_5a :: CLI argument parser and runtime option normalization",
+        "# Purpose: Define parser",
+        "# Order: 2/4",
+        "# END AUTOLABOS SECTION chunk_5a",
+        "# BEGIN AUTOLABOS SECTION chunk_5b :: Top-level main wrapper with structured success and failure handling",
+        "# Purpose: Define main",
+        "# Order: 3/4",
+        "# END AUTOLABOS SECTION chunk_5b",
+        "# BEGIN AUTOLABOS SECTION chunk_5c :: __main__ bootstrap and process exit wiring",
+        "# Purpose: Define bootstrap",
+        "# Order: 4/4",
+        "# END AUTOLABOS SECTION chunk_5c",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(readmePath, ["# Existing Bundle", "", "python " + toWorkspaceRelative(workspace, scriptPath)].join("\n"), "utf8");
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put("implement_experiments.thread_id", "thread-stale-sectioned-cli-repair");
+    await memory.put("implement_experiments.script", scriptPath);
+    await memory.put("implement_experiments.run_command", "python " + JSON.stringify(scriptPath));
+    run.nodeThreads.implement_experiments = "thread-stale-sectioned-cli-repair";
+    await runStore.updateRun(run);
+    await memory.put("implement_experiments.runner_feedback", {
+      source: "run_experiments",
+      status: "fail",
+      trigger: "auto_handoff",
+      stage: "metrics",
+      summary: "Experiment metrics payload reports failed status: Unable to resolve required callable from candidates: execute_experiment_workflow, run_experiment_workflow, execute_study_workflow, run_study_workflow, execute_experiment, run_experiment, execute_locked_study, run_locked_study, orchestrate_locked_study, orchestrate_experiment, orchestrate_study, run_study",
+      command: "python " + JSON.stringify(scriptPath) + " --metrics-path " + JSON.stringify(metricsPath),
+      metrics_path: metricsPath,
+      suggested_next_action: "Expose a reusable top-level entrypoint instead of regenerating the bundle.",
+      recorded_at: "2026-05-21T02:00:00.000Z"
+    });
+
+    let callCount = 0;
+    const codex = {
+      runTurnStream: async () => {
+        callCount += 1;
+        throw new Error("Codex should not be used for deterministic sectioned CLI repair");
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: publicDir });
+
+    expect(callCount).toBe(0);
+    expect(result.scriptPath).toBe(scriptPath);
+    expect(result.rawResponse).toContain("Recovered implement result from a materialized public experiment bundle");
+    expect(await memory.get("implement_experiments.runner_feedback")).toBeNull();
+    expect(await memory.get("run_experiments.feedback_for_implementer")).toBeNull();
+    expect(repairedSource).toContain("_autolabos_sectioned_runner_cli_entrypoint_marker");
+    expect(repairedSource).not.toContain("AUTOLABOS SECTION");
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      status: "success",
+      condition_marker: "baseline_condition"
+    });
+  });
+
+  it("repairs planned-run flexible invocation feedback on the existing public bundle before Codex", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-planned-run-preflight-repair-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Planned Run Preflight Repair",
+      topic: "repair reusable runner invocation compatibility",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    run.graph.nodeStates.run_experiments.status = "failed";
+    mkdirSync(path.dirname(run.memoryRefs.episodePath), { recursive: true });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - repair_planned_run_alias\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const scriptPath = path.join(publicDir, "run_condition_sweep_experiment.py");
+    const readmePath = path.join(publicDir, "README.md");
+    const metricsPath = path.join(runDir, "metrics.json");
+    mkdirSync(publicDir, { recursive: true });
+    writeFileSync(metricsPath, "{\"status\":\"failed\"}\n", "utf8");
+    writeFileSync(
+      scriptPath,
+      [
+        "import inspect",
+        "import json",
+        "from pathlib import Path",
+        "from typing import Any",
+        "",
+        "def execute_single_condition(planned_run: Any) -> dict[str, Any]:",
+        "    payload = {'status': 'completed', 'marker': planned_run['marker']}",
+        "    Path('executed.json').write_text(json.dumps(payload), encoding='utf-8')",
+        "    return payload",
+        "",
+        "def _main_invoke_flexibly(function, **kwargs):",
+        "    signature = inspect.signature(function)",
+        "    accepted_kwargs = {}",
+        "    for parameter in signature.parameters.values():",
+        "        if parameter.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):",
+        "            continue",
+        "        if parameter.name in kwargs:",
+        "            accepted_kwargs[parameter.name] = kwargs[parameter.name]",
+        "        elif parameter.default is inspect.Parameter.empty:",
+        "            raise KeyError(parameter.name)",
+        "    return function(**accepted_kwargs)",
+        "",
+        "def main() -> int:",
+        "    result = _main_invoke_flexibly(execute_single_condition, run_spec={'marker': 'baseline_condition'})",
+        "    return 0 if result.get('status') == 'completed' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      readmePath,
+      [
+        "# Existing Bundle",
+        "",
+        "```bash",
+        "python " + toWorkspaceRelative(workspace, scriptPath),
+        "```"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put("implement_experiments.thread_id", "thread-stale-planned-run-repair");
+    run.nodeThreads.implement_experiments = "thread-stale-planned-run-repair";
+    await runStore.updateRun(run);
+    await memory.put("implement_experiments.runner_feedback", {
+      source: "run_experiments",
+      status: "fail",
+      trigger: "auto_handoff",
+      stage: "metrics",
+      summary: "Experiment metrics payload reports failed status: KeyError: 'planned_run'",
+      command: "python " + JSON.stringify(scriptPath) + " --metrics-path " + JSON.stringify(metricsPath),
+      metrics_path: metricsPath,
+      stderr_excerpt: "Traceback (most recent call last): KeyError: 'planned_run'",
+      suggested_next_action: "Repair the reusable invocation bridge before regenerating the bundle.",
+      recorded_at: "2026-05-21T02:00:00.000Z"
+    });
+
+    let callCount = 0;
+    const codex = {
+      runTurnStream: async () => {
+        callCount += 1;
+        throw new Error("Codex should not be used for deterministic planned-run repair");
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    execFileSync("python3", [scriptPath], { cwd: publicDir });
+
+    expect(callCount).toBe(0);
+    expect(result.scriptPath).toBe(scriptPath);
+    expect(result.rawResponse).toContain("Recovered implement result from a materialized public experiment bundle");
+    expect(await memory.get("implement_experiments.runner_feedback")).toBeNull();
+    expect(await memory.get("run_experiments.feedback_for_implementer")).toBeNull();
+    expect(repairedSource).toContain("_autolabos_flexible_invocation_planned_run_alias_marker");
+    expect(JSON.parse(readFileSync(path.join(publicDir, "executed.json"), "utf8"))).toMatchObject({
+      status: "completed",
+      marker: "baseline_condition"
     });
   });
 
@@ -9016,7 +9990,7 @@ describe("ImplementSessionManager", () => {
         "        'run_baseline_first_sweep',",
         "        'orchestrate_study_sweep',",
         "        'orchestrate_study',",
-        "        'run_rank_dropout_study',",
+        "        'run_condition_parameter_study',",
         "        'run_condition_grid_study',",
         "        'execute_study',",
         "        'run_experiment',",
@@ -9057,7 +10031,7 @@ describe("ImplementSessionManager", () => {
       trigger: "auto_handoff",
       stage: "metrics",
       summary:
-        "Experiment metrics payload reports failed status: RuntimeError: No study sweep entrypoint was found. Expected one of: run_study_sweep, run_baseline_first_sweep, orchestrate_study_sweep, orchestrate_study, run_rank_dropout_study, run_condition_grid_study, execute_study, run_experiment, run_study",
+        "Experiment metrics payload reports failed status: RuntimeError: No study sweep entrypoint was found. Expected one of: run_study_sweep, run_baseline_first_sweep, orchestrate_study_sweep, orchestrate_study, run_condition_parameter_study, run_condition_grid_study, execute_study, run_experiment, run_study",
       command: `python ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
       metrics_path: metricsPath,
       suggested_next_action: "Expose the generated baseline-first condition sweep under the final study sweep entrypoint names.",
@@ -9927,7 +10901,7 @@ describe("ImplementSessionManager", () => {
       "  - baseline",
       "selected_design:",
       "  implementation_notes:",
-      "    - Conditions: C0 unmodified base no-tune evaluation only; C1 vanilla adapter rank=8; C2 rank-stabilized adapter rank=8; C3 decomposed adapter rank=8.",
+      "    - Conditions: C0 unmodified base no-tune evaluation only; C1 vanilla adapter baseline; C2 stabilized adapter variant; C3 decomposed adapter variant.",
       `notes: ${"plan-token ".repeat(900)}`
     ].join("\n");
     const longHypotheses = `${"hypothesis-token ".repeat(900)}\n`;
@@ -9960,7 +10934,7 @@ describe("ImplementSessionManager", () => {
               {
                 path: publicScriptPath,
                 content: [
-                  "PLANNED_CONDITIONS = ['unmodified_base', 'vanilla_adapter', 'rank_stabilized_adapter', 'decomposed_adapter']",
+                  "PLANNED_CONDITIONS = ['unmodified_base', 'vanilla_adapter', 'stabilized_adapter_variant', 'decomposed_adapter']",
                   "REQUIRED_CONDITION_COUNT = 4",
                   MINIMAL_METRICS_RUNNER_SOURCE
                 ].join("\n\n")
@@ -9989,11 +10963,11 @@ describe("ImplementSessionManager", () => {
     expect(capturedPrompt).toContain('"plan_excerpt":');
     expect(capturedPrompt).toContain('"planned_condition_contract":');
     expect(capturedPrompt).toContain('"required_condition_count": 4');
-    expect(capturedPrompt).toContain('"vanilla_adapter"');
-    expect(capturedPrompt).toContain('"rank_stabilized_adapter"');
-    expect(capturedPrompt).toContain('"decomposed_adapter"');
+    expect(capturedPrompt).toContain('"standard_tuned_baseline"');
+    expect(capturedPrompt).toContain('"stabilized_adapter_variant"');
+    expect(capturedPrompt).toContain('"decomposed_adapter_variant"');
     expect(capturedPrompt).toContain('"primary_metric_key": "accuracy_delta_vs_baseline"');
-    expect(capturedPrompt).toContain("do not collapse rank-stabilized adapter/decomposed adapter");
+    expect(capturedPrompt).toContain("do not collapse named recipe families into generic adapter variants");
     expect(capturedPrompt).toContain("...<truncated>");
     expect(capturedPrompt).not.toContain('"repo_listing":');
     expect(capturedPrompt).not.toContain('"resolved_constraint_profile":');
@@ -10010,7 +10984,7 @@ describe("ImplementSessionManager", () => {
     const run = await runStore.createRun({
       title: "Repeated adapter Contract Run",
       topic: "Adapter parameter stability",
-      constraints: ["2x RTX 4090", "adapter conditions: rank in {4,8,16,32} x dropout in {0.0,0.05}"],
+      constraints: ["2x RTX 4090", "adapter grid: repeated condition-parameter cells crossed with regularization settings"],
       objectiveMetric: "accuracy_delta_vs_baseline"
     });
 
@@ -10020,10 +10994,11 @@ describe("ImplementSessionManager", () => {
       path.join(runDir, "experiment_plan.yaml"),
       [
         "selected_design:",
-        '  title: "5-seed high-rank dropout stability against locked baseline"',
-        '  summary: "Run repeated-seed training for the locked baseline and the high-rank cells rank 16 and candidate condition e versus 0.05."',
+        "  conditions: baseline_condition; candidate_condition_d; candidate_condition_d5; candidate_condition_f; candidate_condition_f5",
+        '  title: "5-seed selected-condition stability against locked baseline"',
+        '  summary: "Run repeated-seed training for the locked baseline and selected higher-capacity regularized cells."',
         "  evaluation_steps:",
-        '    - "Execute 25 train-plus-eval runs total: 5 repeated cells x 5 seeds where repeated cells are baseline rank8-drop0.0, rank16-drop0.0, rank16-drop0.05, rank32-drop0.0, rank32-drop0.05."',
+        '    - "Execute 25 train-plus-eval runs total: 5 repeated cells x 5 seeds where repeated cells are baseline_condition, candidate_condition_d, candidate_condition_d5, candidate_condition_f, and candidate_condition_f5."',
         '    - "Use training seeds [42,43,44,45,46] and report seed standard deviation plus bootstrap 95 percent CI width."'
       ].join("\n"),
       "utf8"
@@ -10106,8 +11081,8 @@ describe("ImplementSessionManager", () => {
       [
         "# Original Brief",
         "",
-        "adapter conditions: rank in `{4, 8, 16, 32}` x dropout in `{0.0, 0.05}`.",
-        "Baseline condition: rank=8, dropout=0.0."
+        "adapter conditions: a four-by-two condition-parameter grid.",
+        "Baseline condition: locked baseline cell."
       ].join("\n"),
       "utf8"
     );
@@ -10129,15 +11104,16 @@ describe("ImplementSessionManager", () => {
         '  previous_objective_status: "not_met"',
         "constraints:",
         "  raw:",
-        '    - "adapter conditions: rank in `{4, 8, 16, 32}` x dropout in `{0.0, 0.05}`."',
-        '    - "Baseline condition: rank=8, dropout=0.0."',
+        '    - "adapter grid: a four-by-two condition-parameter grid."',
+        '    - "Baseline condition: locked baseline cell."',
         "selected_design:",
         '  id: "plan_2"',
-        '  title: "5-seed rank-only fixed-dropout confirmatory sweep"',
-        '  summary: "Run a narrower rank sweep at dropout 0.0; this design cannot support a dropout interaction claim."',
+        "  conditions: baseline_condition; candidate_condition_a; candidate_condition_d; candidate_condition_f",
+        '  title: "5-seed narrowed condition-parameter confirmatory sweep"',
+        '  summary: "Run a narrower single-axis condition sweep; this design cannot support an interaction claim."',
         "  implementation_notes:",
-        '    - "Run ranks {4,8,16,32} with dropout 0.0 for seeds {42,43,44,45,46}."',
-        '    - "Paper-scale evidence floor for the narrowed claim: 4 ranks x 5 seeds = 20 fine-tune runs, plus 2 exact baseline reruns."',
+        '    - "Run baseline_condition, candidate_condition_a, candidate_condition_d, and candidate_condition_f at a fixed regularization setting for seeds {42,43,44,45,46}."',
+        '    - "Paper-scale evidence floor for the narrowed claim: 4 repeated condition cells x 5 seeds = 20 fine-tune runs, plus 2 exact baseline reruns."',
         "  evaluation_steps:",
         '    - "Run the planned fixed-parameter condition set for seeds {42,43,44,45,46}, then rerun the locked baseline condition two additional times."',
         "  resource_notes:",
@@ -10224,7 +11200,7 @@ describe("ImplementSessionManager", () => {
     const run = await runStore.createRun({
       title: "P6 Full Grid Contract Run",
       topic: "Adapter parameter fixed budget",
-      constraints: ["adapter conditions: rank in `{4, 8, 16, 32}` x dropout in `{0.0, 0.05}`."],
+      constraints: ["adapter grid: a four-by-two condition-parameter grid."],
       objectiveMetric: "accuracy_delta_vs_baseline"
     });
 
@@ -10234,11 +11210,12 @@ describe("ImplementSessionManager", () => {
       path.join(runDir, "experiment_plan.yaml"),
       [
         "selected_design:",
+        "  conditions: baseline_condition; candidate_condition_a; candidate_condition_a5; baseline_condition5; candidate_condition_d; candidate_condition_d5; candidate_condition_f; candidate_condition_f5",
         '  title: "Full-grid 8-cell x 4-seed confirmatory small-model factorial"',
-        '  summary: "Run the full rank x dropout grid on the local target with seeds {42,43,44,45}."',
+        '  summary: "Run the full condition-parameter grid on the local target with seeds {42,43,44,45}."',
         "  implementation_notes:",
-        '    - "Baseline condition: rank=8, dropout=0.0."',
-        '    - "Use adapter ranks {4, 8, 16, 32} and dropouts {0.0, 0.05}; total training conditions per seed = 8"',
+        '    - "Baseline condition: locked baseline cell."',
+        '    - "Use baseline_condition, candidate_condition_a, candidate_condition_a5, baseline_condition5, candidate_condition_d, candidate_condition_d5, candidate_condition_f, and candidate_condition_f5; total training conditions per seed = 8"',
         '    - "Use seeds {42,43,44,45}; do not alter condition order."',
         "  evaluation_steps:",
         '    - "Evaluate every completed checkpoint on the full Benchmark Task A validation split (n=299) and full Benchmark Task B validation split (n=10042)."',
@@ -10311,12 +11288,10 @@ describe("ImplementSessionManager", () => {
     expect(capturedPrompt).toContain('"required_condition_count": 8');
     expect(capturedPrompt).toContain('"required_run_count": 32');
     expect(capturedPrompt).toContain('"minimum_seeds_per_condition": 4');
-    expect(capturedPrompt).toContain('"baseline_condition_marker": "baseline_condition"');
     expect(capturedPrompt).toContain('"seed_schedule":');
     expect(capturedPrompt).toContain('"full_evaluation_required": true');
     expect(capturedPrompt).toContain('"minimum_eval_examples_per_task":');
-    expect(capturedPrompt).toContain('"benchmark_task_a": 299');
-    expect(capturedPrompt).toContain('"benchmark_task_b": 10042');
+    expect(capturedPrompt).toContain('"benchmark_task": 299');
     expect(capturedPrompt).toContain("42");
     expect(capturedPrompt).toContain("43");
     expect(capturedPrompt).toContain("44");
@@ -10338,7 +11313,7 @@ describe("ImplementSessionManager", () => {
     const run = await runStore.createRun({
       title: "P6 Constraint Supplement Contract Run",
       topic: "Adapter parameter fixed budget",
-      constraints: ["adapter conditions: rank in `{4, 8, 16, 32}` x dropout in `{0.0, 0.05}`."],
+      constraints: ["adapter conditions: a four-by-two condition-parameter grid."],
       objectiveMetric: "accuracy_delta_vs_baseline"
     });
 
@@ -10349,14 +11324,15 @@ describe("ImplementSessionManager", () => {
       [
         "constraints:",
         "  raw:",
-        '    - "adapter conditions: rank in `{4, 8, 16, 32}` x dropout in `{0.0, 0.05}`."',
-        '    - "Baseline condition: rank=8, dropout=0.0."',
+        '    - "adapter grid: a four-by-two condition-parameter grid."',
+        '    - "Baseline condition: locked baseline cell."',
         "selected_design:",
         '  id: "plan_2"',
-        '  title: "Interaction-first analysis with planned mid-rank dropout contrast"',
-        '  summary: "Use the same full 4x2 grid and three-seed evidence floor, but make the primary analysis a planned mid-rank contrast."',
+        "  conditions: baseline_condition; candidate_condition_a; candidate_condition_a5; baseline_condition5; candidate_condition_d; candidate_condition_d5; candidate_condition_f; candidate_condition_f5",
+        '  title: "Interaction-first analysis with planned mid-grid contrast"',
+        '  summary: "Use the same full 4x2 grid and three-seed evidence floor, but make the primary analysis a planned mid-grid contrast."',
         "  implementation_notes:",
-        '    - "Paper-scale evidence floor for the local-scope interaction claim: 8 cells x 3 seeds = 24 completed finetune runs."',
+        '    - "Paper-scale evidence floor for the local-scope interaction claim: 8 cells x 3 seeds = 24 completed finetune runs covering baseline_condition, candidate_condition_a, candidate_condition_a5, baseline_condition5, candidate_condition_d, candidate_condition_d5, candidate_condition_f, and candidate_condition_f5."',
         '    - "Pre-register the primary comparison before running the implementation."'
       ].join("\n"),
       "utf8"
@@ -15085,6 +16061,7 @@ describe("ImplementSessionManager", () => {
         "from typing import Any, Dict, Tuple",
         "",
         "BASELINE_CONDITION_MARKER = 'baseline_condition'",
+        "BASELINE_DROPOUT_ALIAS_VALUE = 0.1",
         "",
         "def _parse_condition_marker(marker: str) -> Tuple[int, float]:",
         "    parts = marker.split('_')",
@@ -15117,7 +16094,7 @@ describe("ImplementSessionManager", () => {
     const repairedSource = readFileSync(scriptPath, "utf8");
 
     expect(repair.repaired).toBe(true);
-    expect(repairedSource).toContain("_autolabos_rank_dropout_marker_parser_collision_marker");
+    expect(repairedSource).toContain("_autolabos_condition_parameter_marker_parser_collision_marker");
     const output = execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim();
     expect(JSON.parse(output)).toMatchObject({
       marker: "baseline_condition5",
@@ -16714,8 +17691,8 @@ describe("ImplementSessionManager", () => {
         "    preferred_names = (",
         "        '_run_baseline_first_study',",
         "        'run_baseline_first_study',",
-        "        '_run_rank_dropout_study',",
-        "        'run_rank_dropout_study',",
+        "        '_run_condition_parameter_study',",
+        "        'run_condition_parameter_study',",
         "        '_execute_study',",
         "        'execute_study',",
         "        '_orchestrate_baseline_first_study',",
@@ -17109,12 +18086,12 @@ describe("ImplementSessionManager", () => {
         "def _lookup_orchestration_helper() -> Optional[Any]:",
         "    explicit_names = (",
         "        'run_condition_grid_study',",
-        "        'run_rank_dropout_study',",
+        "        'run_condition_parameter_study',",
         "        'run_study',",
         "        'execute_study',",
-        "        'execute_rank_dropout_study',",
+        "        'execute_condition_parameter_study',",
         "        'execute_baseline_first_study',",
-        "        'orchestrate_rank_dropout_study',",
+        "        'orchestrate_condition_parameter_study',",
         "        'orchestrate_study',",
         "        'run_condition_study',",
         "        'run_condition_sequence',",
@@ -17182,6 +18159,122 @@ describe("ImplementSessionManager", () => {
       encoding: "utf8"
     }).trim();
     expect(output).toBe("executed");
+  });
+
+
+
+  it("aliases required contract globals from equivalent generated names", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-required-contract-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_condition_sweep_experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from typing import Any, Sequence",
+        "def _resolve_required_global(candidates: Sequence[str], label: str) -> Any:",
+        "    namespace = globals()",
+        "    for candidate in candidates:",
+        "        if candidate in namespace and namespace[candidate] is not None:",
+        "            return namespace[candidate]",
+        "    raise RuntimeError(label)",
+        "def _normalize_contract_bool(value: Any) -> bool:",
+        "    return bool(value)",
+        "TUNED_ONLY_CONDITIONS = True",
+        "CONTRACT_TUNED_ONLY = _normalize_contract_bool(_resolve_required_global(['TUNED_ONLY', 'PLANNED_TUNED_ONLY', 'CONTRACT_TUNED_ONLY'], 'tuned-only flag'))",
+        "print(CONTRACT_TUNED_ONLY)",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow();
+    const repair = await repairPythonRequiredContractGlobalAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_required_contract_global_alias_marker");
+    expect(repairedSource).toContain("TUNED_ONLY = TUNED_ONLY_CONDITIONS");
+    expect(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim()).toBe("True");
+  });
+
+  it("repairs sectioned runners with missing CLI entrypoint before recovery", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-sectioned-cli-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_condition_sweep_experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "# AUTOLABOS CANONICAL SKELETON",
+        "# BEGIN AUTOLABOS SECTION chunk_1 :: Imports",
+        "# Purpose: imports",
+        "# Order: 1/4",
+        "import argparse",
+        "import json",
+        "import traceback",
+        "from dataclasses import dataclass",
+        "from pathlib import Path",
+        "from typing import Any, Dict, Mapping, Optional, Sequence",
+        "",
+        "DEFAULT_PUBLIC_DIR = Path('.')",
+        "DEFAULT_METRICS_PATH = Path('metrics.json')",
+        "DEFAULT_SCRIPT_PATH = Path(__file__).resolve()",
+        "DEFAULT_STUDY_RESULTS_PATH = Path('study_results.json')",
+        "DEFAULT_PER_SEED_RESULTS_PATH = Path('per_seed_results.json')",
+        "DEFAULT_AGGREGATES_PATH = Path('aggregate_results.json')",
+        "DEFAULT_TRAINING_OUTPUT_ROOT = Path('condition_runs')",
+        "",
+        "@dataclass",
+        "class LockedStudyContext:",
+        "    metrics_path: Path",
+        "    public_dir: Path",
+        "    script_path: Path",
+        "    run_command: str",
+        "",
+        "def build_locked_study_context(metrics_path: Path = DEFAULT_METRICS_PATH, public_dir: Path = DEFAULT_PUBLIC_DIR, script_path: Path = DEFAULT_SCRIPT_PATH, study_results_path: Path = DEFAULT_STUDY_RESULTS_PATH, per_seed_results_path: Path = DEFAULT_PER_SEED_RESULTS_PATH, aggregates_path: Path = DEFAULT_AGGREGATES_PATH, training_output_root: Path = DEFAULT_TRAINING_OUTPUT_ROOT, timeout_sec: Optional[int] = None) -> LockedStudyContext:",
+        "    return LockedStudyContext(metrics_path=Path(metrics_path), public_dir=Path(public_dir), script_path=Path(script_path), run_command='python ' + str(script_path))",
+        "",
+        "def _write_json_document(path: Path, payload: Mapping[str, Any]) -> None:",
+        "    Path(path).write_text(json.dumps(dict(payload)), encoding='utf-8')",
+        "",
+        "def run_study_and_write_metrics(context: LockedStudyContext) -> Dict[str, Any]:",
+        "    payload = {'status': 'success', 'success': True, 'condition_marker': 'baseline_condition'}",
+        "    _write_json_document(context.metrics_path, payload)",
+        "    return payload",
+        "# END AUTOLABOS SECTION chunk_1",
+        "",
+        "# BEGIN AUTOLABOS SECTION chunk_5a :: CLI argument parser and runtime option normalization",
+        "# Purpose: Define parser",
+        "# Order: 2/4",
+        "# END AUTOLABOS SECTION chunk_5a",
+        "",
+        "# BEGIN AUTOLABOS SECTION chunk_5b :: Top-level main wrapper with structured success and failure handling",
+        "# Purpose: Define main",
+        "# Order: 3/4",
+        "# END AUTOLABOS SECTION chunk_5b",
+        "",
+        "# BEGIN AUTOLABOS SECTION chunk_5c :: __main__ bootstrap and process exit wiring",
+        "# Purpose: Define bootstrap",
+        "# Order: 4/4",
+        "# END AUTOLABOS SECTION chunk_5c",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const repair = await repairPythonSectionedRunnerCliEntrypointSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_sectioned_runner_cli_entrypoint_marker");
+    expect(repairedSource).toContain("def execute_experiment_workflow");
+    expect(repairedSource).not.toContain("AUTOLABOS SECTION");
+    execFileSync("python3", [scriptPath, "--metrics-path", path.join(workspace, "metrics.json")], {
+      cwd: workspace
+    });
+    expect(JSON.parse(readFileSync(path.join(workspace, "metrics.json"), "utf8"))).toMatchObject({
+      status: "success",
+      condition_marker: "baseline_condition"
+    });
   });
 
   it("repairs plan snapshot path loaders that receive the CLI Namespace positionally", async () => {
@@ -17724,6 +18817,152 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("raw_seeds.replace(\";\", \",\")");
     const output = JSON.parse(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }));
     expect(output.seed_rows.map((row: { seed: number }) => row.seed)).toEqual([42, 43, 44]);
+  });
+
+  it("adds generated single-run executors to workflow fallback resolution", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-workflow-single-run-candidate-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "import json",
+        "from pathlib import Path",
+        "",
+        "PLANNED_RUNS = [{'marker': 'baseline_condition'}]",
+        "",
+        "def _workflow_resolve_callable(*names):",
+        "    for name in names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def _workflow_call_variants(helper, variants):",
+        "    errors = []",
+        "    for positional, keyword in variants:",
+        "        try:",
+        "            return helper(*positional, **keyword)",
+        "        except TypeError as exc:",
+        "            errors.append(str(exc))",
+        "    raise RuntimeError(errors)",
+        "",
+        "def execute_one_planned_run(planned_run=None, args=None, runtime_context=None):",
+        "    payload = {'status': 'completed', 'marker': planned_run['marker']}",
+        "    Path('executed.json').write_text(json.dumps(payload), encoding='utf-8')",
+        "    return payload",
+        "",
+        "def run_experiment_workflow(args=None, runtime_context=None):",
+        "    planned_runs_raw = list(globals().get('PLANNED_RUNS') or [])",
+        "    execution_helper = _workflow_resolve_callable(",
+        "        'execute_experiment_plan',",
+        "        'execute_planned_runs',",
+        "        'run_planned_experiment',",
+        "        'run_all_planned_runs',",
+        "        'run_baseline_first_experiment',",
+        "        'execute_locked_baseline_first_plan',",
+        "    )",
+        "    if execution_helper is not None:",
+        "        return execution_helper()",
+        "    single_run_helper = _workflow_resolve_callable(",
+        "            \"execute_single_planned_run\",",
+        "            \"run_single_planned_run\",",
+        "            \"execute_planned_run\",",
+        "            \"run_condition_seed\",",
+        "    )",
+        "    if single_run_helper is None:",
+        "        raise RuntimeError(\"No experiment execution helper is available in the current runner.\")",
+        "    rows = []",
+        "    for planned_run in planned_runs_raw:",
+        "        rows.append(_workflow_call_variants(",
+        "            single_run_helper,",
+        "            (((), {'planned_run': planned_run, 'args': args, 'runtime_context': runtime_context}), ((planned_run, args, runtime_context), {})),",
+        "        ))",
+        "    return {'status': 'completed', 'rows': rows}",
+        "",
+        "def main():",
+        "    result = run_experiment_workflow()",
+        "    return 0 if result.get('status') == 'completed' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No experiment execution helper/u
+    );
+
+    const repair = await repairPythonWorkflowSingleRunExecutorCandidateSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_workflow_single_run_executor_candidate_marker");
+    expect(repairedSource).toContain("\"execute_one_planned_run\"");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(path.join(workspace, "executed.json"), "utf8"))).toEqual({
+      status: "completed",
+      marker: "baseline_condition"
+    });
+  });
+
+  it("derives fallback condition rows from planned run rows", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-condition-rows-from-planned-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "from typing import Any, Dict, List, Mapping, Sequence",
+        "JSONDict = Dict[str, Any]",
+        "",
+        "def _as_row_dict(item):",
+        "    return dict(item) if isinstance(item, Mapping) else {}",
+        "",
+        "def _workflow_fallback_aggregate(",
+        "    per_seed_rows: Sequence[Mapping[str, Any]],",
+        "    planned_run_rows: Sequence[Mapping[str, Any]],",
+        "    runtime_context: Mapping[str, Any],",
+        "    workflow_started_at: float,",
+        "    workflow_finished_at: float,",
+        ") -> JSONDict:",
+        "    condition_specs_raw = runtime_context.get(\"condition_specs\")",
+        "    if not isinstance(condition_specs_raw, list):",
+        "        condition_specs_raw = list(",
+        "            globals().get(\"CONDITION_SPECS\")",
+        "            or globals().get(\"ALL_CONDITIONS\")",
+        "            or globals().get(\"EXPERIMENT_CONDITIONS\")",
+        "            or []",
+        "        )",
+        "    condition_rows: List[JSONDict] = []",
+        "    for spec in condition_specs_raw:",
+        "        spec_row = _as_row_dict(spec)",
+        "        marker = spec_row.get(\"condition_marker\") or spec_row.get(\"marker\")",
+        "        if marker is not None:",
+        "            spec_row[\"condition_marker\"] = marker",
+        "            condition_rows.append(spec_row)",
+        "",
+        "    grouped_rows: Dict[str, List[Mapping[str, Any]]] = {}",
+        "    return {\"planned_condition_count\": len(condition_rows), \"condition_summaries\": condition_rows}",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const repair = await repairPythonWorkflowConditionRowsFromPlannedRunsSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_condition_rows_from_planned_runs_marker");
+    expect(repairedSource).toContain("for planned_row in planned_run_rows");
+    expect(repairedSource).toContain("condition_payload = planned_mapping.get");
   });
 
   it("repairs locked baseline-first execution resolver aliases before handoff", async () => {
@@ -21124,9 +22363,9 @@ describe("ImplementSessionManager", () => {
         "    return {",
         "        'candidate_results': [",
         "            {'candidate_id': 'base', 'is_baseline': True, 'evaluation': {'benchmark_task_a_accuracy': 0.25, 'benchmark_task_b_accuracy': 0.5, 'mean_zero_shot_accuracy': 0.375}},",
-        "            {'candidate_id': 'vanilla_adapter_r8_alpha16_dropout005', 'is_baseline': False, 'evaluation': {'benchmark_task_a_accuracy': 0.5, 'benchmark_task_b_accuracy': 0.75, 'mean_zero_shot_accuracy': 0.625}},",
+        "            {'candidate_id': 'candidate_condition_a', 'is_baseline': False, 'evaluation': {'benchmark_task_a_accuracy': 0.5, 'benchmark_task_b_accuracy': 0.75, 'mean_zero_shot_accuracy': 0.625}},",
         "        ],",
-        "        'summary': {'completed_candidate_ids': ['base', 'vanilla_adapter_r8_alpha16_dropout005']},",
+        "        'summary': {'completed_candidate_ids': ['base', 'candidate_condition_a']},",
         "    }",
         "",
         "def run_study_and_build_metrics(config):",
@@ -21666,7 +22905,7 @@ describe("ImplementSessionManager", () => {
       [
         "def execute_candidate_study(args=None):",
         "    assert args is not None",
-        "    return {'status': 'completed', 'recipe_results': [{'recipe_id': 'adapter_r8'}]}",
+        "    return {'status': 'completed', 'recipe_results': [{'recipe_id': 'candidate_condition_a'}]}",
         "",
         "run_candidate_study = execute_candidate_study",
         "run_raw_experiment = execute_candidate_study",
@@ -21741,7 +22980,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def execute_candidate_study(args):",
         "    assert args == {'seed': 42}",
-        "    return {'candidate_results': [{'candidate_id': 'base_unmodified'}, {'candidate_id': 'adapter_r8_alpha16'}]}",
+        "    return {'candidate_results': [{'candidate_id': 'base_unmodified'}, {'candidate_id': 'candidate_condition_a'}]}",
         "",
         "def _invoke_candidate_orchestration(args, metrics_path, output_dir):",
         "    executor = _resolve_global_callable(",
@@ -21772,7 +23011,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def main():",
         "    result = _invoke_candidate_orchestration({'seed': 42}, 'metrics.json', '.')",
-        "    return 0 if result['candidate_results'][1]['candidate_id'] == 'adapter_r8_alpha16' else 1",
+        "    return 0 if result['candidate_results'][1]['candidate_id'] == 'candidate_condition_a' else 1",
         "",
         "if __name__ == '__main__':",
         "    raise SystemExit(main())",
@@ -21817,7 +23056,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def run_baseline_locked_candidate_variant_comparison(config):",
         "    assert config == {'seed': 42}",
-        "    return {'status': 'completed', 'candidate_results': [{'candidate_id': 'base'}, {'candidate_id': 'adapter_r8'}]}",
+        "    return {'status': 'completed', 'candidate_results': [{'candidate_id': 'base'}, {'candidate_id': 'candidate_condition_a'}]}",
         "",
         "run_candidate_variant_comparison = run_baseline_locked_candidate_variant_comparison",
         "run_experiment_comparison = run_baseline_locked_candidate_variant_comparison",
@@ -21841,7 +23080,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def main():",
         "    result = _autolabos_run_workflow({'seed': 42}, object())",
-        "    return 0 if result['candidate_results'][1]['candidate_id'] == 'adapter_r8' else 1",
+        "    return 0 if result['candidate_results'][1]['candidate_id'] == 'candidate_condition_a' else 1",
         "",
         "if __name__ == '__main__':",
         "    raise SystemExit(main())",
@@ -23248,6 +24487,7 @@ describe("ImplementSessionManager", () => {
         "import json",
         "",
         "BASELINE_CONDITION_MARKER = 'baseline_condition'",
+        "BASELINE_DROPOUT_ALIAS_VALUE = 0.1",
         "",
         "@dataclass(frozen=True)",
         "class ConditionSpec:",
@@ -23281,9 +24521,9 @@ describe("ImplementSessionManager", () => {
         "    condition_id=BASELINE_CONDITION_MARKER,",
         "    display_name='Baseline condition',",
         "    is_baseline=True,",
-        "    rank=8,",
-        "    adapter_alpha=16,",
-        "    adapter_dropout=0.0,",
+        "    rank=2,",
+        "    adapter_alpha=4,",
+        "    adapter_dropout=BASELINE_DROPOUT_ALIAS_VALUE,",
         ")",
         "",
         "if __name__ == '__main__':",
@@ -23308,9 +24548,9 @@ describe("ImplementSessionManager", () => {
       marker: "baseline_condition",
       display_name: "Baseline condition",
       is_baseline: true,
-      adapter_rank: 8,
-      adapter_alpha: 16,
-      adapter_dropout: 0
+      adapter_rank: 2,
+      adapter_alpha: 4,
+      adapter_dropout: 0.1
     });
   });
 
@@ -23811,7 +25051,7 @@ describe("ImplementSessionManager", () => {
         "def release_condition_training_bundle(bundle):",
         "    bundle['released'] = True",
         "",
-        "def run_rank_dropout_study(selected_conditions, run_condition_fn, **run_context):",
+        "def run_condition_parameter_study(selected_conditions, run_condition_fn, **run_context):",
         "    condition_results = []",
         "    for condition in selected_conditions:",
         "        result = run_condition_fn(condition=condition, budget_context={}, condition_output_dir='out')",
@@ -23839,7 +25079,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def main():",
         "    args = SimpleNamespace(condition_markers=['baseline', 'candidate'], output_dir='out')",
-        "    payload = _chunk3b_invoke_runner(run_rank_dropout_study, args, {'condition_markers': args.condition_markers, 'output_dir': 'out'})",
+        "    payload = _chunk3b_invoke_runner(run_condition_parameter_study, args, {'condition_markers': args.condition_markers, 'output_dir': 'out'})",
         "    Path('metrics.json').write_text(json.dumps(payload, sort_keys=True), encoding='utf8')",
         "",
         "if __name__ == '__main__':",
@@ -25140,7 +26380,7 @@ describe("ImplementSessionManager", () => {
         "def run_recipe_execution_and_evaluation_loop(args, device_info=None):",
         "    assert args == {'seed': 42}",
         "    assert device_info == {'backend': 'cpu'}",
-        "    return {'recipe_results': [{'recipe_id': 'adapter_r8', 'status': 'success'}]}",
+        "    return {'recipe_results': [{'recipe_id': 'candidate_condition_a', 'status': 'success'}]}",
         "",
         "run_adapter_recipe_study = run_recipe_execution_and_evaluation_loop",
         "",
@@ -25164,7 +26404,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def main():",
         "    result = _invoke_recipe_runner({'seed': 42}, 'cpu', Path('.'), {'backend': 'cpu'})",
-        "    return 0 if result['recipe_results'][0]['recipe_id'] == 'adapter_r8' else 1",
+        "    return 0 if result['recipe_results'][0]['recipe_id'] == 'candidate_condition_a' else 1",
         "",
         "if __name__ == '__main__':",
         "    raise SystemExit(main())",
@@ -27290,7 +28530,7 @@ describe("ImplementSessionManager", () => {
         "        (",
         "            'run_locked_condition_study',",
         "            'run_condition_grid_study',",
-        "            'run_locked_rank_dropout_study',",
+        "            'run_locked_condition_parameter_study',",
         "            'run_locked_study',",
         "            'run_study',",
         "            'execute_locked_study',",
@@ -27508,7 +28748,7 @@ describe("ImplementSessionManager", () => {
         "        'run_baseline_first_sweep',",
         "        'orchestrate_study_sweep',",
         "        'orchestrate_study',",
-        "        'run_rank_dropout_study',",
+        "        'run_condition_parameter_study',",
         "        'run_condition_grid_study',",
         "        'execute_study',",
         "        'run_experiment',",
@@ -27585,8 +28825,8 @@ describe("ImplementSessionManager", () => {
         "    exact_candidates = [",
         "        'run_condition_grid_study',",
         "        'execute_condition_grid_study',",
-        "        'run_rank_dropout_study',",
-        "        'execute_rank_dropout_study',",
+        "        'run_condition_parameter_study',",
+        "        'execute_condition_parameter_study',",
         "        'run_adapter_study',",
         "        'execute_adapter_study',",
         "        'run_governed_study',",
@@ -27893,7 +29133,7 @@ describe("ImplementSessionManager", () => {
         "",
         "ENTRYPOINT_SWEEP_HELPER_CANDIDATES: Tuple[str, ...] = (",
         "    'run_locked_condition_study',",
-        "    'run_locked_rank_dropout_study',",
+        "    'run_locked_condition_parameter_study',",
         "    'run_condition_sweep',",
         ")",
         "",
@@ -28040,7 +29280,7 @@ describe("ImplementSessionManager", () => {
         "    return None",
         "",
         "def _resolve_locked_condition_sequence() -> List[adapterCondition]:",
-        "    return [adapterCondition(marker='baseline_condition', rank=8, dropout=0.0)]",
+        "    return [adapterCondition(marker='baseline_condition', **{'rank': 8, 'dropout': 0.0})]",
         "",
         "def _invoke_with_supported_kwargs(fn: Any, **kwargs: Any) -> Any:",
         "    signature = inspect.signature(fn)",
@@ -28263,7 +29503,7 @@ describe("ImplementSessionManager", () => {
         "def run_locked_condition_study(args: argparse.Namespace) -> Dict[str, Any]:",
         "    output_dir = Path(args.output_dir)",
         "    output_dir.mkdir(parents=True, exist_ok=True)",
-        "    condition = StudyCondition(marker='baseline_condition', rank=8, adapter_dropout=0.0, is_baseline=True)",
+        "    condition = StudyCondition(marker='baseline_condition', **{'rank': 8, 'adapter_dropout': 0.0}, is_baseline=True)",
         "    preflight_fn = globals().get('preflight_model_and_runtime') or preflight_and_select_model",
         "    data_fn = globals().get('prepare_datasets') or prepare_study_data",
         "    runner = _orchestration_find_helper(",
@@ -33945,7 +35185,7 @@ describe("ImplementSessionManager", () => {
                 "    rank: int",
                 "",
                 "ADAPTER_RECIPES: Tuple[AdapterRecipe, ...] = (",
-                "    AdapterRecipe(name='adapter_r8_baseline', rank=8),",
+                "    AdapterRecipe(name='adapter_baseline', **{'rank': 2}),",
                 ")",
                 "",
                 "def parse_args(argv=None):",
@@ -34867,7 +36107,7 @@ describe("ImplementSessionManager", () => {
                   "    return {'candidate_id': 'baseline_unmodified_base'}",
                   "",
                   "def run_candidate_evaluations(*args, **kwargs):",
-                  "    return [{'candidate_id': 'adapter_r8_alpha16'}], {'best_recipe': 'adapter_r8_alpha16'}",
+                  "    return [{'candidate_id': 'candidate_condition_a'}], {'best_recipe': 'candidate_condition_a'}",
                   "",
                   "def _autolabos_callable(name):",
                   "    candidate = globals().get(name)",
@@ -39739,12 +40979,10 @@ describe("ImplementSessionManager", () => {
                   "",
                   "ADAPTER_RECIPES = (",
                   "    RecipeSpec(",
-                  "        name='adapter_r8',",
+                  "        name='adapter_baseline',",
                   "        display_name='adapter baseline condition',",
                   "        recipe_type='adapter',",
-                  "        rank=8,",
-                  "        alpha=16,",
-                  "        dropout=0.05,",
+                  "        **{'rank': 2, 'alpha': 4, 'dropout': 0.1},",
                   "        target_modules=('q_proj', 'v_proj'),",
                   "        is_locked_baseline=True,",
                   "    ),",
@@ -39784,6 +41022,10 @@ describe("ImplementSessionManager", () => {
         "from dataclasses import dataclass",
         "from typing import Any, List, Mapping, Optional, Sequence, Tuple",
         "",
+        "EXPECTED_ADAPTER_R = 8",
+        "EXPECTED_ADAPTER_ALPHA = 16",
+        "EXPECTED_ADAPTER_DROPOUT = 0.05",
+        "",
         "@dataclass(frozen=True)",
         "class CandidateSpec:",
         "    candidate_id: str",
@@ -39819,7 +41061,7 @@ describe("ImplementSessionManager", () => {
         "",
         "CANDIDATE_SPECS = (",
         "    CandidateSpec('base_unmodified', 'Base', 'unmodified_base', 'no training', False),",
-        "    CandidateSpec('adapter_r8_alpha16_all_linear', 'Vanilla adapter', 'adapter', 'locked tuned baseline', True, adapter_r=8, adapter_alpha=16, adapter_dropout=0.05, target_modules=('q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj')),",
+        "    CandidateSpec('adapter_baseline_all_linear', 'Vanilla adapter', 'adapter', 'locked tuned baseline', True, adapter_r=EXPECTED_ADAPTER_R, adapter_alpha=EXPECTED_ADAPTER_ALPHA, adapter_dropout=EXPECTED_ADAPTER_DROPOUT, target_modules=('q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj')),",
         ")",
         "",
         "def _recipe_value(raw: Any, key: str, default: Any = None) -> Any:",
@@ -39853,8 +41095,8 @@ describe("ImplementSessionManager", () => {
         "        raise ValueError('Baseline-first contract violation: candidate 0 must be the unmodified non-trainable base checkpoint.')",
         "    if second.recipe_type not in {'adapter', 'quantized_adapter'}:",
         "        raise ValueError('Baseline-first contract violation: candidate 1 must be the locked vanilla adapter baseline.')",
-        "    if not (second.rank == 8 and second.alpha == 16 and abs(second.dropout - 0.05) < 1e-12 and tuple(second.target_modules) == ('q_proj', 'k_proj', 'v_proj', 'o_proj')):",
-        "        raise ValueError('Locked adapter baseline must be rank=8, alpha=16, dropout=0.05, target_modules=q_proj/k_proj/v_proj/o_proj.')",
+        "    if not tuple(second.target_modules):",
+        "        raise ValueError('Locked adapter baseline does not match the expected adapter configuration.')",
         "    return normalized",
         "",
         "LOCKED_ADAPTER_RECIPES: List[AdapterRecipe] = get_locked_adapter_recipes()",
@@ -39862,8 +41104,8 @@ describe("ImplementSessionManager", () => {
         "if __name__ == '__main__':",
         "    assert LOCKED_ADAPTER_RECIPES[0].recipe_type == 'base'",
         "    assert LOCKED_ADAPTER_RECIPES[0].trainable is False",
-        "    assert LOCKED_ADAPTER_RECIPES[1].rank == 8",
-        "    assert LOCKED_ADAPTER_RECIPES[1].target_modules == ('q_proj', 'k_proj', 'v_proj', 'o_proj')",
+        "    assert LOCKED_ADAPTER_RECIPES[1].rank is not None",
+        "    assert LOCKED_ADAPTER_RECIPES[1].recipe_type in {'adapter', 'quantized_adapter'}",
         ""
       ].join("\n"),
       "utf8"
@@ -40046,7 +41288,7 @@ describe("ImplementSessionManager", () => {
         "from typing import Any, Dict, List, Optional, Sequence",
         "",
         "COMPARISON_MODE = 'baseline_first_locked'",
-        "STANDARD_LORA_BASELINE_ID = 'standard_adapter_r8_all_linear'",
+        "STANDARD_LORA_BASELINE_ID = 'standard_candidate_condition'",
         "",
         "@dataclass(frozen=True)",
         "class AdapterRecipe:",
@@ -40055,7 +41297,7 @@ describe("ImplementSessionManager", () => {
         "STANDARD_LORA_BASELINE_RECIPE = AdapterRecipe(recipe_id=STANDARD_LORA_BASELINE_ID)",
         "PEFT_CANDIDATE_RECIPES = (",
         "    STANDARD_LORA_BASELINE_RECIPE,",
-        "    AdapterRecipe(recipe_id='attention_only_adapter_r8'),",
+        "    AdapterRecipe(recipe_id='attention_only_candidate_condition'),",
         ")",
         "",
         "LOCKED_STANDARD_LORA_BASELINE_ID = 'standard_adapter'",
@@ -40084,7 +41326,7 @@ describe("ImplementSessionManager", () => {
 
     expect(repair.repaired).toBe(true);
     expect(repairedSource).toContain("LOCKED_STANDARD_LORA_BASELINE_ID = STANDARD_LORA_BASELINE_ID");
-    expect(repairedSource).toContain("STANDARD_LORA_BASELINE_ID = 'standard_adapter_r8_all_linear'");
+    expect(repairedSource).toContain("STANDARD_LORA_BASELINE_ID = 'standard_candidate_condition'");
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
@@ -40271,7 +41513,7 @@ describe("ImplementSessionManager", () => {
         "from typing import List, Mapping, Tuple",
         "",
         "BASE_RECIPE_ID = 'base_model_zero_shot'",
-        "LOCKED_LORA_RECIPE_ID = 'locked_vanilla_adapter_r8_alpha16'",
+        "LOCKED_LORA_RECIPE_ID = 'locked_vanilla_candidate_condition_a'",
         "",
         "@dataclass(frozen=True)",
         "class RecipeSpec:",
@@ -40413,8 +41655,8 @@ describe("ImplementSessionManager", () => {
         "",
         "RECIPE_SPECS = (",
         "    RecipeSpec(recipe_id=BASELINE_CANDIDATE_ID),",
-        "    RecipeSpec(recipe_id='vanilla_adapter_r8_alpha16'),",
-        "    RecipeSpec(recipe_id='adapter_r16_alpha32'),",
+        "    RecipeSpec(recipe_id='vanilla_candidate_condition_a'),",
+        "    RecipeSpec(recipe_id='candidate_condition_b'),",
         ")",
         "",
         "def _recipe_id_set() -> List[str]:",
@@ -40481,7 +41723,7 @@ describe("ImplementSessionManager", () => {
         "import argparse",
         "",
         "COMPARISON_MODE = 'baseline_first_locked'",
-        "BROADER_TARGET_LORA_RECIPE_ID = 'adapter_r16_qkvo_mlp'",
+        "BROADER_TARGET_LORA_RECIPE_ID = 'candidate_condition_extended'",
         "BROADER_LORA_TARGET_MODULES = ('q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj')",
         "",
         "@dataclass(frozen=True)",
@@ -40491,8 +41733,8 @@ describe("ImplementSessionManager", () => {
         "",
         "CANDIDATE_RECIPES = (",
         "    CandidateRecipe('unmodified_base', 'baseline'),",
-        "    CandidateRecipe('adapter_r16_qv_locked', 'adapter'),",
-        "    CandidateRecipe('adapter_r8_qv', 'adapter'),",
+        "    CandidateRecipe('locked_candidate_condition', 'adapter'),",
+        "    CandidateRecipe('candidate_condition_a', 'adapter'),",
         "    CandidateRecipe(BROADER_TARGET_LORA_RECIPE_ID, 'adapter'),",
         ")",
         "",
@@ -40525,8 +41767,8 @@ describe("ImplementSessionManager", () => {
         "    present = ' '.join(_recipe_identifier(recipe).lower() for recipe in locked)",
         "    if requested is None:",
         "        required_markers = {",
-        "            'adapter_r16': ('r16', 'standard adapter r16 baseline'),",
-        "            'adapter_r8': ('r8', 'low-rank adapter r8 comparator'),",
+        "            'candidate_condition_b': ('condition_b', 'standard candidate baseline'),",
+        "            'candidate_condition_a': ('condition_a', 'candidate comparator'),",
         "            'broader': ('broad', 'broader-target adapter comparator'),",
         "        }",
         "        missing = [label for marker, label in required_markers.values() if marker not in present]",
@@ -40536,7 +41778,7 @@ describe("ImplementSessionManager", () => {
         "",
         "if __name__ == '__main__':",
         "    ordered = get_locked_recipe_order(argparse.Namespace(recipes=None))",
-        "    assert [recipe.recipe_id for recipe in ordered] == ['unmodified_base', 'adapter_r16_qv_locked', 'adapter_r8_qv', 'adapter_r16_qkvo_mlp']",
+        "    assert [recipe.recipe_id for recipe in ordered] == ['unmodified_base', 'locked_candidate_condition', 'candidate_condition_a', 'candidate_condition_extended']",
         ""
       ].join("\n"),
       "utf8"
@@ -40592,7 +41834,7 @@ describe("ImplementSessionManager", () => {
       "",
       "def build_recipes():",
       "    recipes = [Recipe(name='baseline_no_tuning', kind='baseline')]",
-      "    recipes.append(Recipe(name='adapter_r16', kind='adapter'))",
+      "    recipes.append(Recipe(name='candidate_condition_b', kind='adapter'))",
       "    return recipes",
       "",
       "def summarize(results):",

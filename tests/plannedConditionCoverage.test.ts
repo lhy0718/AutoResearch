@@ -38,19 +38,19 @@ describe("planned condition coverage", () => {
           type: "locked_untuned_baseline",
           evaluation: { primary_mean_accuracy: 0.525 }
         },
-        adapter_r16: {
+        candidate_condition_b: {
           type: "peft_adapter_instruction_tuned",
           train: {
             trainable_params: 2252800,
-            recipe: { name: "adapter_r16" }
+            recipe: { name: "candidate_condition_b" }
           },
           evaluation: { primary_mean_accuracy: 0.4875 }
         },
-        adapter_r8: {
+        candidate_condition_a: {
           type: "peft_adapter_instruction_tuned",
           train: {
             trainable_params: 1126400,
-            recipe: { name: "adapter_r8" }
+            recipe: { name: "candidate_condition_a" }
           },
           evaluation: { primary_mean_accuracy: 0.5125 }
         }

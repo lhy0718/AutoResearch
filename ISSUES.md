@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-05-14
+Last updated: 2026-05-28
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
@@ -14,6 +14,321 @@ Path placeholders:
 - `<repo-root>` means the local AutoLabOS implementation checkout.
 
 ---
+
+## Issue: LV-447
+
+- Status: reproduced in same-flow P6 validation on 2026-05-28; source repair implemented; same-flow snapshot-bloat revalidation passed on 2026-05-28
+- Validation target: implement_experiments attempt isolation should not copy regenerated runtime-output directories into attempt snapshots, because repeated retries can consume large disk space and turn a repairable implementation problem into ENOSPC/cancellation.
+- Environment/session context: existing P6 validation run 3bc89107-909f-4315-9340-d75ce02eb0e0 in <validation-workspace>, continued from design_experiments.needs_approval into implement_experiments after LV-446 revalidation.
+
+- Reproduction steps:
+  1. Approve the paused design_experiments gate and continue to implement_experiments with scripts/p6-approve-and-run-next.py.
+  2. Observe implement_experiments start staged_llm mode and load prior runner feedback from run_experiments.
+  3. Observe the helper transcript report ENOSPC while writing implement progress status.
+  4. Inspect <validation-workspace>/.autolabos/runs/<run-id>/implement_experiments/attempt_snapshots and observe attempt snapshots containing regenerated runtime-output subdirectories such as adapters, training_artifacts, condition_runs, evaluations, scratch, and study_runs.
+  5. Observe the run remain at currentNode=implement_experiments until the stale helper is terminated, after which the persisted status becomes paused with latestSummary=Canceled by user.
+
+- Expected behavior:
+  - Attempt snapshots should preserve editable implementation contracts and source-facing files needed for rollback.
+  - Regenerable runtime outputs, model/adaptor artifacts, training outputs, scratch directories, and evaluation output trees should be excluded from snapshot copies.
+  - Disk pressure should not convert an implementation repair retry into a stale running helper followed by a user-canceled persisted state.
+
+- Actual behavior:
+  - attempt_snapshots grew to 22G during the continuation, including two orphaned attempt snapshots totaling about 10.3G.
+  - The helper transcript contained ENOSPC: no space left on device while writing implement progress status.
+  - The live run had to be terminated after run_record stopped updating; persisted state ended as paused/currentNode=implement_experiments/latestSummary=Canceled by user.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started; this issue was reproduced in the existing P6 run because same-flow validation must preserve the active workflow state.
+  - Existing session: the active run reached implement_experiments but attempt isolation copied too much regenerated runtime output into snapshots.
+  - Divergence: this is an artifact-isolation capacity defect, not an evidence-quality or generated-paper-writing defect.
+
+- Root cause hypothesis:
+  - Type: persisted_state_bug
+  - Hypothesis: attempt snapshot capture protected the entire public experiment directory and restorable run-directory entries without excluding common regenerated runtime-output directories. Large prior training/evaluation outputs were copied into each retry snapshot, producing disk pressure and leaving persisted node state vulnerable when progress writes failed.
+
+- Code/test changes:
+  - Code: src/core/agents/implementSessionManager.ts now excludes generic regenerated runtime-output and cache directories from attempt snapshots, including adapters, artifacts, checkpoints, condition outputs, evaluations, logs, model artifacts, page image/PDF caches, results, run artifacts, scratch, seed outputs, study outputs, tokenizer files, and training outputs.
+  - Tests: tests/implementSessionManager.test.ts now covers these generic runtime-output directories in the attempt snapshot skip-list without introducing method-, model-, benchmark-, or condition-specific fixture names.
+
+- Regression status:
+  - Reproduced: same-flow P6 continuation reached implement_experiments and hit ENOSPC while writing implementation progress.
+  - Validation: focused implementSessionManager test passed; npm run build passed; npm test -- --run tests/publicCodeSanitization.test.ts passed; public identifier scan found no PEFT/benchmark/condition leakage; npm run validate:harness passed.
+  - Same-flow revalidation: passed for the snapshot-bloat boundary. After cleanup and rerun, attempt_snapshots stayed at 163M, excluded the targeted runtime/cache directories, and did not reproduce ENOSPC. Downstream result: implement_experiments continued into staged_llm generation and reached a persisted P6 helper-timeout boundary after 900 seconds, which is a separate bounded-generation issue rather than snapshot disk exhaustion.
+
+- Remaining risks:
+  - New snapshots are bounded, but older transient snapshots from pre-repair runs may still require cleanup if retained in a validation workspace.
+  - The current persisted run is paused at implement_experiments with latestSummary=P6 helper timed out waiting for implement_experiments stop boundary after 900 seconds.
+  - The run may still expose separate implementation-contract or stale-runner-feedback issues after disk pressure is removed.
+
+- Evidence/artifacts:
+  - <repo-root>/outputs/p6-preflight/p6-continue-implement_experiments-output.txt
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/attempt_snapshots
+
+## Issue: LV-446
+
+- Status: repair implemented; same-flow design_experiments boundary revalidated on 2026-05-28
+- Validation target: P6 helper should not accept terminal text such as Node design_experiments finished as a stop boundary unless persisted run_record state confirms a fresh stopped boundary after observation began.
+- Environment/session context: existing P6 validation run 3bc89107-909f-4315-9340-d75ce02eb0e0 in <validation-workspace>, after a governed rollback from implement_experiments to design_experiments during LV-445 repair validation.
+
+- Reproduction steps:
+  1. Continue run 3bc89107-909f-4315-9340-d75ce02eb0e0 from design_experiments with scripts/p6-approve-and-run-next.py.
+  2. Observe TUI transcript lines reporting Node design_experiments completed and Node design_experiments finished.
+  3. Observe the helper process remain open while persisted run_record.json still reports design_experiments as running.
+  4. Terminate the helper after the apparent completion boundary.
+  5. Observe run_record.json record currentNode=design_experiments, status=paused, design_experiments.status=pending, latestSummary=Canceled by user.
+
+- Expected behavior:
+  - The helper should require a fresh persisted stop boundary when a run record was available at observation start.
+  - Text-only completion should not trigger /quit while the node is still persisting its completed/needs_approval state.
+  - A transient run_record read miss during write should be treated as inconclusive, not as permission to accept a terminal text boundary.
+
+- Actual behavior:
+  - The TUI transcript showed design_experiments finished, but persisted run_record state did not stabilize to a fresh stopped boundary.
+  - The helper/TUI termination path left the node as pending with note Canceled by user, losing the apparent completion boundary.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started; this was a continuation of the existing P6 validation run through the same helper.
+  - Existing session: persisted state and transcript diverged; persisted run_record is authoritative and shows cancellation rather than a completed boundary.
+  - Divergence: this is a helper stop-boundary/persistence timing issue, not a design_experiments scientific-content issue.
+
+- Root cause hypothesis:
+  - Type: race_timing_bug
+  - Hypothesis: should_accept_text_stop_boundary treated record=None as authoritative even when an initial run_record signature existed. A transient read miss during run_record writes could therefore allow text-only stop acceptance and send /quit before the node's fresh stopped state was durably persisted.
+
+- Code/test changes:
+  - Code: scripts/p6-approve-and-run-next.py now accepts text-only stop boundaries with record=None only when no initial persisted signature existed. If observation began with a run_record, a later read miss is inconclusive.
+  - Tests: extended the helper selftest to reject accepting a text stop boundary after observation began when run_record is temporarily unreadable.
+
+- Regression status:
+  - Reproduced: same-flow P6 run showed design_experiments completion transcript but persisted pending/Canceled by user after helper termination.
+  - Validation: AUTOLABOS_P6_CONTINUE_SELFTEST=1 python3 scripts/p6-approve-and-run-next.py passed; python3 -m py_compile scripts/p6-approve-and-run-next.py passed.
+  - Same-flow revalidation: passed; rerunning design_experiments waited for persisted run_record to reach status=paused, currentNode=design_experiments, design_experiments.status=needs_approval before helper exit.
+
+- Remaining risks:
+  - The helper may now wait longer when text completion appears before persisted state catches up, but this is preferable to canceling a still-persisting node.
+  - design_experiments must be rerun from the persisted pending boundary because the previous completion transcript was not durably recorded.
+
+- Evidence/artifacts:
+  - <repo-root>/outputs/p6-preflight/p6-continue-design_experiments-output.txt
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json
+
+## Issue: LV-445
+
+- Status: reproduced in same-flow P6 validation on 2026-05-28; source repair extended; same-flow rerun reached durable helper-timeout boundary before handoff validation
+- Validation target: after run_experiments rejects a generated runner for a concrete callable/signature mismatch, implement_experiments should apply a bounded repair and return a runnable artifact without entering multi-hour staged generation.
+- Environment/session context: existing P6 validation run 3bc89107-909f-4315-9340-d75ce02eb0e0 in <validation-workspace>, after the workflow backtracked from weak experimental evidence to generate_hypotheses, strengthened design_experiments, regenerated implementation artifacts, and retried execution.
+
+- Reproduction steps:
+  1. Continue run 3bc89107-909f-4315-9340-d75ce02eb0e0 through generate_hypotheses, design_experiments, and implement_experiments.
+  2. Run run_experiments against the generated public experiment runner.
+  3. Observe that the runner writes failed metrics with KeyError: planned_run from its flexible callable invocation adapter.
+  4. Let the workflow rollback to implement_experiments and rerun the node with the run_experiments failure feedback.
+  5. Observe implement_experiments streaming partial staged output for more than three hours before the provider stream is aborted and the workflow rolls back to design_experiments.
+
+- Expected behavior:
+  - run_experiments should reject failed metrics and prevent progression to analysis or paper writing.
+  - implement_experiments should convert the concrete KeyError: planned_run feedback into a bounded runner repair.
+  - Repair generation should be scoped to the failing invocation bridge, not regenerate an unbounded multi-artifact runner for hours.
+  - If repair cannot complete inside the configured budget, the node should persist a concise failure with a clear repair target and stop at a stable boundary.
+
+- Actual behavior:
+  - run_experiments correctly rejected failed metrics and restored the previous non-failed metrics snapshot.
+  - The failed metrics reported KeyError: planned_run from the generated runner flexible invocation path.
+  - A subsequent implement_experiments repair attempt streamed staged LLM output for more than three hours, repeatedly updating implement_experiments/partial_response.txt.
+  - The run eventually rolled back to design_experiments with Implementation execution failed before any runnable implementation was produced: Codex OAuth stream aborted.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; this was a continuation of the existing P6 validation run through the same helper and persisted run store.
+  - Existing session: the persisted run state, exec logs, metrics rejection logs, and rollback state all agree that execution did not progress to paper writing.
+  - Divergence: no fresh/existing UI divergence observed; the defect is a node repair boundedness and generated-runner invocation repair issue.
+
+- Root cause hypothesis:
+  - Type: in_memory_projection_bug
+  - Hypothesis: the implementation repair loop receives a precise runtime signature mismatch but responds with broad staged regeneration. The generated runner callable adapter lacks a robust fallback for helpers requiring a planned_run argument, while the repair node lacks a tight patch path and output budget for this failure class.
+
+- Code/test changes:
+  - Code: added a handoff repair that teaches generated flexible invocation helpers to map semantic run inputs such as run_spec into required planned_run parameters before handing the runner to run_experiments. Also connected the existing supported-kwargs semantic alias repair into the late handoff repair sequence.
+  - Tests: added neutral fixture regression coverage for a generated condition-sweep runner whose inspect.signature adapter previously raised KeyError: planned_run when the caller supplied run_spec.
+  - Code: extended existing public-bundle recovery so concrete run_experiments feedback such as KeyError: planned_run or required-callable resolver failures can trigger deterministic local repair of the materialized runner before re-entering Codex staged generation.
+  - Tests: added neutral fixture regression coverage that verifies an existing public bundle with planned-run flexible invocation feedback is repaired and reused without calling Codex.
+  - Code: added a generic sectioned-runner CLI entrypoint repair that fills missing parser/main/bootstrap surfaces, exposes standard AutoLabOS callable aliases, accepts managed runtime flags such as --config and --run-dir, strips skeleton markers, and lets deterministic recovery run before rejecting an existing bundle for unstripped AUTOLABOS SECTION markers.
+  - Tests: added neutral fixture coverage for direct sectioned CLI repair and existing-bundle recovery without calling Codex.
+  - Code: added a generic required-contract-global alias repair so equivalent generated contract names such as TUNED_ONLY_CONDITIONS can satisfy required import-time contract lookups before recovery.
+  - Tests: added neutral fixture coverage for the required contract global alias drift.
+
+- Regression status:
+  - Same-flow reproduction: confirmed on 2026-05-28.
+  - Guard behavior: confirmed that run_experiments did not let failed metrics advance to analysis or paper writing.
+  - Public source hygiene scan: src, tests, docs, and .codex contain no matches for the previously flagged experiment-specific fixture strings such as compact PEFT, run_peft_instruction_study, arc_challenge, hellaswag, or concrete rank/dropout condition IDs; only the generic metric lexicon in paperAnalyzer.ts remains.
+  - Repair validation: focused implementSessionManager regression tests passed, including existing-bundle planned_run deterministic repair, sectioned CLI repair, sectioned CLI existing-bundle recovery before Codex, and required-contract-global alias repair; npm run build passed; publicCodeSanitization test passed; exact public-source leak scan returned no matches for the flagged experiment-specific fixture strings. Same-flow P6 rerun first showed the persisted bundle still fell into staged generation because unfilled section markers blocked recovery; after disk cleanup the persisted runner received the sectioned CLI repair, then exposed a second import-time contract alias drift that is now covered by source/test repair and still needs same-flow live validation.
+
+- Follow-up risks:
+  - Without a bounded repair path, meta-harness iterations can spend hours on output regeneration instead of applying a small source-level invocation bridge fix.
+  - The post-repair same-flow reruns showed two adjacent blockers: recovery rejected unstripped section markers, then the repaired runner failed import-time contract alias resolution. The latest source changes cover both, but the same P6 flow must still prove recovery reaches run_experiments rather than staged regeneration.
+  - Actual experiment artifacts may legitimately contain concrete condition markers, but those must remain under ignored run-output directories and must not leak into public repo source, tests, docs, or skills.
+
+- Evidence/artifacts:
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/exec_logs/run_experiments.txt
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/exec_logs/rejected_metrics_1779959034302.json
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/status.json
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/partial_response.txt
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/p6_helper_timeout.json
+  - <repo-root>/outputs/p6-preflight/p6-continue-implement_experiments-output.txt
+  - Disk cleanup on 2026-05-28 removed only orphaned implement_experiments attempt snapshots, reducing attempt_snapshots from 348G to 11G and restoring 338G free space.
+
+## Issue: LV-444
+
+- Status: repair implemented; same-flow retry dispatch revalidated on 2026-05-28
+- Validation target: P6 helper should recognize a failed-node TUI prompt as an interactive ready state, send the retry command, and observe the retried node instead of timing out before command dispatch.
+- Environment/session context: existing P6 validation run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, with `implement_experiments` intentionally paused at a helper-timeout failure boundary after LV-443 repair validation.
+
+- Reproduction steps:
+  1. Build AutoLabOS with the LV-443 helper-timeout boundary repair.
+  2. Ensure run `3bc89107-909f-4315-9340-d75ce02eb0e0` is paused at `currentNode=implement_experiments` with `implement_experiments.status=failed` and a persisted `lastError`.
+  3. Run `scripts/p6-approve-and-run-next.py` with `AUTOLABOS_P6_NEXT_NODE=implement_experiments`.
+  4. Observe the helper before it sends `/agent retry implement_experiments <run-id>`.
+
+- Expected behavior:
+  - The helper should treat the failed-node prompt as an interactive ready state.
+  - The helper should compute `/agent retry implement_experiments <run-id>` from the persisted failure and send it.
+  - The helper should then observe the fresh retried node until a new durable stop boundary appears.
+
+- Actual behavior:
+  - The TUI rendered a prompt with `implement_experiments failed`, but the helper's `READY_PATTERN` did not match it.
+  - The helper timed out waiting for a ready pattern before dispatching the retry command.
+  - No node-owned experiment implementation retry was started by that helper invocation.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not yet reproduced in a fresh failed-node run.
+  - Existing session: reproduced on the P6 paper-readiness validation run after LV-443 helper-timeout repair validation.
+  - Divergence: likely specific to resumed/failed-node prompts where the UI is ready but does not include the older approval guidance text.
+
+- Root cause hypothesis:
+  - Type: `refresh_render_bug`
+  - Hypothesis: the helper's initial readiness pattern only covers running/pending/approval guidance variants and misses the modern failed-node status footer used when a paused failed node is ready for a slash command.
+
+- Code/test changes:
+  - Code: `scripts/p6-approve-and-run-next.py` now treats a failed-node TUI footer such as `implement_experiments failed` as an interactive ready state during initial attach.
+  - Test: the P6 helper self-test now verifies that `READY_PATTERN` matches the failed-node interactive footer before command dispatch.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-28.
+  - Automated regression: pass with `AUTOLABOS_P6_CONTINUE_SELFTEST=1 python3 scripts/p6-approve-and-run-next.py`, `python3 -m py_compile scripts/p6-approve-and-run-next.py`, and `npm run validate:harness` on 2026-05-28.
+  - Same-flow revalidation: pass for retry dispatch. The helper attached to the failed `implement_experiments` prompt, sent `/agent retry implement_experiments <run-id>`, and persisted state changed to `runStatus=running`, `currentNode=implement_experiments`, `latestSummary=manual retry`.
+  - Downstream result: the retried node executed node-owned staged materialization through `chunk 4/4 subchunk 4/4`, then exceeded the 3600-second helper timeout and was closed with a durable `p6_helper_timeout`/failed boundary instead of stale `running` state.
+
+- Follow-up risks:
+  - If the helper cannot issue retries from a failed node, node-owned execution stalls and the paper-quality loop cannot progress beyond implementation repair boundaries.
+
+- Evidence/artifacts:
+  - `<repo-root>/outputs/p6-preflight/p6-continue-implement_experiments-output.txt`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`
+
+---
+
+## Issue: LV-443
+
+- Status: repair implemented; same-flow helper-timeout boundary revalidated on 2026-05-28
+- Validation target: P6 `implement_experiments` should reach a durable stop boundary, persisted node failure, or bounded retry decision instead of leaving the run projected as `running` after the helper timeout kills the TUI process.
+- Environment/session context: existing P6 validation run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, continued after `generate_hypotheses` and `design_experiments` reached durable approval boundaries on 2026-05-28.
+
+- Reproduction steps:
+  1. Build AutoLabOS with the LV-442 helper-buffer and coarse planning-progress repairs.
+  2. Approve the paused `design_experiments` gate for run `3bc89107-909f-4315-9340-d75ce02eb0e0`.
+  3. Run `scripts/p6-approve-and-run-next.py` with `AUTOLABOS_P6_NEXT_NODE=implement_experiments` and a 7200-second next-node timeout.
+  4. Observe the helper timeout and persisted run state after the process is cleaned up.
+
+- Expected behavior:
+  - `implement_experiments` should either complete, fail with a persisted diagnostic, or pause at a durable approval/retry boundary before the helper exits.
+  - If external timeout cleanup is required, `run_record.json` and node status artifacts should not remain indistinguishable from a live running node.
+  - Progress artifacts should be bounded enough that the meta harness can diagnose the current node without being dominated by stale or excessively large progress streams.
+
+- Actual behavior:
+  - The helper timed out after 7200 seconds while `implement_experiments` was still in attempt 2 of 3.
+  - No P6/TUI process remained after helper cleanup, but persisted artifacts still reported `currentNode=implement_experiments` and `implement_experiments/status.json` reported `status=running`.
+  - `implement_experiments/progress.jsonl` reached 16 MB and 1011 progress events; the latest event was a staged LLM subchunk request for the generated runner.
+  - No `lastError` or durable node failure was present in the inspected run state.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not yet reproduced in a fresh run.
+  - Existing session: reproduced on the existing P6 run after a legitimate `analyze_results -> generate_hypotheses -> design_experiments -> implement_experiments` continuation.
+  - Divergence: unknown; current evidence is from the paper-readiness validation run being resumed by the meta harness.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged implementation materialization can continue through large recursive chunks long enough for the external helper timeout to terminate the TUI, but the node does not persist a timeout/failure boundary when the owning process is gone. The meta harness then sees stale `running` state with no live process to advance it.
+
+- Code/test changes:
+  - Code: `scripts/p6-approve-and-run-next.py` now persists a helper-timeout boundary when the observed node remains `running` after the helper timeout. It marks the target node as `failed` in both `run_record.json` and the node-local `status.json`, and writes a `p6_helper_timeout` diagnostic artifact instead of fabricating completion or metrics.
+  - Test: the P6 helper self-test now covers `persist_helper_timeout_boundary(...)` and verifies that a stale running node is converted into a paused failed node with both node-state and node-status diagnostics.
+  - Guard: public-code fixture sanitization now rejects additional visible one-off condition/benchmark strings, and public tests/source were neutralized so generated-code fixtures do not expose the previous PEFT/rank/dropout benchmark identifiers.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-28.
+  - Same-flow revalidation: pass for stale-running cleanup. A short bounded continuation timed out after 8 seconds, then persisted `run_record.json` as `status=paused`, `implement_experiments` node state as `failed`, and `implement_experiments/p6_helper_timeout.json` with the timeout diagnostic. The node-local `status.json` was then synchronized to the same helper-timeout boundary after the repair was tightened.
+  - Automated regression: pass with `AUTOLABOS_P6_CONTINUE_SELFTEST=1 python3 scripts/p6-approve-and-run-next.py`, `python3 -m py_compile scripts/p6-approve-and-run-next.py`, targeted `tests/implementSessionManager.test.ts`, `tests/publicCodeSanitization.test.ts`, `tests/researchPlanning.test.ts`, `tests/resultAnalysis.test.ts`, `npm run build`, and `npm run validate:harness` on 2026-05-28.
+
+- Follow-up risks:
+  - Continuing the paper-quality loop without a durable `implement_experiments` boundary can confuse stale progress with active work.
+  - Simply increasing the helper timeout may eventually advance, but would not by itself fix stale `running` projection after process cleanup.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/status.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/progress.jsonl`
+  - `<repo-root>/outputs/p6-preflight/p6-continue-implement_experiments-output.txt`
+
+## Issue: LV-442
+
+- Status: repair implemented; same-flow live revalidation reached durable `generate_hypotheses` approval boundary on 2026-05-28
+- Validation target: P6 backtrack resume from `analyze_results` to `generate_hypotheses` should execute or re-execute the hypothesis node, persist a stop boundary, and leave the helper process idle or exited.
+- Environment/session context: existing P6 validation run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, invoked through `scripts/p6-approve-and-run-next.py` after `analyze_results` recommended `backtrack_to_hypotheses -> generate_hypotheses`.
+
+- Reproduction steps:
+  1. Build AutoLabOS and run harness validation.
+  2. Approve the paused `analyze_results` gate for run `3bc89107-909f-4315-9340-d75ce02eb0e0`.
+  3. Run `scripts/p6-approve-and-run-next.py` with `AUTOLABOS_P6_NEXT_NODE=generate_hypotheses`.
+  4. Observe the helper and TUI process after several minutes.
+
+- Expected behavior:
+  - The helper should either observe a fresh `generate_hypotheses` stop boundary or surface an actionable node failure.
+  - `run_record.json` should transition from `running/generate_hypotheses` to a durable stop state such as `needs_approval`, `failed`, or `paused` with a clear error.
+  - The helper and TUI process should not busy-loop without persisted progress.
+
+- Actual behavior:
+  - The run record remained at `runStatus=running`, `currentNode=generate_hypotheses`, `generate_hypotheses.status=running`, with no `lastError` and no updated usage for the node after the command began.
+  - The helper and Node CLI stayed active for more than five minutes with high CPU usage while `run_record.json` was not updated.
+  - Terminating the helper/TUI returned the persisted run to `paused`, `currentNode=generate_hypotheses`, `generate_hypotheses.status=pending`, so no durable node completion could be trusted.
+  - After bounding the helper transcript/search buffer, Python helper CPU dropped substantially, but the Node CLI still remained CPU-bound with no persisted state or usage update.
+  - Artifact inspection showed `hypothesis_generation/status.json` and `progress.jsonl` were being updated while `run_record.json` was unchanged; progress was logging streamed model deltas token-by-token, producing very large event/progress artifacts.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not yet reproduced in a fresh run.
+  - Existing session: reproduced twice on the existing P6 run after the analyze-results backtrack.
+  - Divergence: unknown; current evidence is from an existing resumed/backtracked run.
+
+- Root cause hypothesis:
+  - Type: `refresh_render_bug`
+  - Hypothesis: the resumed TUI/helper path can enter a high-CPU observation or render loop after a forced node run/backtrack, while the node state remains projected as running and no fresh persisted stop boundary is written.
+
+- Code/test changes:
+  - Code: `scripts/p6-approve-and-run-next.py` now bounds retained transcript and regex-search buffers to avoid repeatedly scanning very large PTY output.
+  - Code: `src/core/analysis/researchPlanning.ts` now suppresses streamed delta-token progress in planning logs while preserving status events such as request submission and response receipt.
+  - Tests: `AUTOLABOS_P6_CONTINUE_SELFTEST=1 python3 scripts/p6-approve-and-run-next.py`; `python3 -m py_compile scripts/p6-approve-and-run-next.py`; `tests/researchPlanning.test.ts` covers coarse hypothesis progress without delta-token leakage.
+
+- Regression status:
+  - Automated regression test linked: partial helper self-test and `tests/researchPlanning.test.ts` progress regression.
+  - Re-validation result: pass for this failure surface; after helper-buffer bounding and delta-token progress suppression, the same P6 run advanced through `generate_hypotheses`, wrote `hypothesis_generation/status.json` with `status=completed`, and persisted `generate_hypotheses.status=needs_approval`.
+
+- Follow-up risks:
+  - The validation loop cannot honestly continue through P6 until this resume/backtrack execution path either completes durably or fails with a persisted diagnostic.
+  - Stale helper output files can confuse diagnosis because prior log content may look like current node completion.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`
+  - `outputs/p6-preflight/p6-continue-generate_hypotheses-output.txt`
 
 ## Issue: LV-440
 
