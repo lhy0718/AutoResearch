@@ -15,6 +15,62 @@ Path placeholders:
 
 ---
 
+## Issue: LV-450
+
+- Status: reproduced in same-flow P6 validation on 2026-05-29; source repair implemented; same-flow design_experiments revalidation passed on 2026-05-29
+- Validation target: design_experiments should not project a full hypothesis, objective prose, or multiple condition changes into experiment_contract.single_change, and should preserve a bounded paper/evidence ceiling before execution.
+- Environment/session context: existing P6 validation run 3bc89107-909f-4315-9340-d75ce02eb0e0 in <validation-workspace>, after analyze_results backtracked to generate_hypotheses and design_experiments regenerated a new experiment plan.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS after the LV-449 event-log repair and rerun design_experiments on the active P6 validation run.
+  2. Inspect experiment_contract.json after the first regenerated design.
+  3. Observe single_change contain a long plan title derived from the full hypothesis, while causal_mechanism, evidence_ceiling, and paper_ceiling repeat the full hypothesis and verbose objective text.
+  4. Rerun design_experiments after adding a contract gate and observe the first LLM design blocked before execution because single_change contained conjunction-separated independent interventions.
+
+- Expected behavior:
+  - Design candidates should expose a dedicated single_change field separate from the title and summary.
+  - Fallback designs should use neutral bounded condition-factor labels instead of stuffing the full hypothesis into title, plan_summary, or contract.single_change.
+  - Contract validation should block confounded single_change content before implementation or execution.
+  - Objective/metric prose should be normalized to metric identifiers before entering metric arrays or expected_metric_effect.
+  - Fallback or conditional paper-ready language should produce an explicit paper/evidence ceiling.
+
+- Actual behavior:
+  - Fallback design used the hypothesis text as the title and as the core of plan_summary.
+  - design_experiments mapped selected.title directly into experiment_contract.single_change and used run.objectiveMetric raw prose in expected_metric_effect.
+  - validateExperimentContract emitted confounding notes, but design_experiments only logged them and still allowed downstream progression.
+  - The generated contract could imply paper-ready status conditionally without a normalized ceiling.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started; the defect was reproduced in the active P6 validation run and depended on its generated hypotheses, retry context, and persisted design artifacts.
+  - Existing session: the defect appeared in experiment_contract.json and events.jsonl, then cleared after source repair and same-flow design reruns.
+  - Divergence: no fresh/existing UI divergence observed; this is an in-memory design-to-contract projection and gate-strength issue.
+
+- Root cause hypothesis:
+  - Type: in_memory_projection_bug
+  - Hypothesis: design_experiments treated candidate title and raw objective text as contract-ready structured fields. Fallback candidate construction also conflated hypothesis prose with executable design fields, and contract validation warnings were not promoted to blocking gates for confounding.
+
+- Code/test changes:
+  - Code: src/core/analysis/researchPlanning.ts now accepts candidate.single_change, asks design LLMs for it, normalizes metric lists, and builds fallback designs with neutral condition-sweep single_change/title/summary fields.
+  - Code: src/core/nodes/designExperiments.ts now maps selected.single_change into the experiment contract, derives expected_metric_effect from the normalized objective metric profile, blocks confounded/missing-baseline contract issues before execution, and normalizes paper/evidence ceilings for fallback or conditional paper-ready wording.
+  - Tests: tests/researchPlanning.test.ts now covers fallback title/single_change neutralization and filters objective-style prose out of metric lists while preserving real metric identifiers.
+
+- Regression status:
+  - Automated regression passed: npm test -- --run tests/researchPlanning.test.ts tests/experimentContract.test.ts tests/publicCodeSanitization.test.ts.
+  - Focused post-adjustment regression passed: npm test -- --run tests/researchPlanning.test.ts tests/publicCodeSanitization.test.ts.
+  - Build passed: npm run build.
+  - Harness validation passed: npm run validate:harness.
+  - Public-code sanitization scan passed for the previously reported patterns: run_peft_instruction_study, run_lora_rank_dropout, rank_8_dropout_0_0, rank_16_dropout_0_0, arc_challenge, hellaswag, compact peft, and Recovered cached.
+  - Same-flow revalidation: design_experiments first blocked a confounded single_change before execution, then completed with a regenerated contract whose single_change is bounded, expected_metric_effect uses accuracy_delta_vs_baseline, and paper_ceiling/evidence_ceiling are explicit.
+
+- Remaining risks:
+  - The active P6 run is paused at design_experiments needs_approval; implementation/execution should proceed only after reviewing the latest design contract and accepting that it is still a fixed-budget condition-sweep, not a broad interaction claim.
+  - Generated run artifacts may legitimately contain the concrete user experiment topic, model/task context, and condition labels; public source/tests must remain neutral.
+
+- Evidence/artifacts:
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/experiment_contract.json
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/events.jsonl
+  - <repo-root>/outputs/p6-preflight/p6-continue-design_experiments-output.txt
+
 ## Issue: LV-449
 
 - Status: reproduced in same-flow P6 validation on 2026-05-29; source repair implemented; validation-workspace harness revalidation passed on 2026-05-29

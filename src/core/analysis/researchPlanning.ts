@@ -150,6 +150,7 @@ export interface ExperimentDesignCandidate {
   id: string;
   title: string;
   hypothesis_ids: string[];
+  single_change?: string;
   plan_summary: string;
   datasets: string[];
   metrics: string[];
@@ -277,6 +278,7 @@ interface RawDesignCandidate {
   id?: unknown;
   title?: unknown;
   hypothesis_ids?: unknown;
+  single_change?: unknown;
   plan_summary?: unknown;
   datasets?: unknown;
   metrics?: unknown;
@@ -1118,6 +1120,7 @@ function buildDesignPrompt(
     '      "id": "plan_1",',
     '      "title": "short design title",',
     '      "hypothesis_ids": ["h_1"],',
+    '      "single_change": "one independent variable or condition factor changed by this design",',
     '      "plan_summary": "what will be tested and why",',
     '      "datasets": ["dataset"],',
     '      "metrics": ["metric"],',
@@ -1961,9 +1964,10 @@ function normalizeDesignCandidate(
     id: toOptionalString(raw.id) || `plan_${index + 1}`,
     title,
     hypothesis_ids: dedupeStrings(fallbackHypothesisIds),
+    single_change: normalizeDesignSingleChange(toOptionalString(raw.single_change) || title),
     plan_summary: planSummary,
     datasets: normalizeStringArray(raw.datasets),
-    metrics: dedupeStrings([...normalizeStringArray(raw.metrics), ...guidance.metrics]),
+    metrics: normalizeDesignMetricList([...normalizeStringArray(raw.metrics), ...guidance.metrics]),
     baselines: dedupeStrings([...normalizeStringArray(raw.baselines), ...guidance.baselines]),
     implementation_notes: dedupeStrings([
       ...normalizeStringArray(raw.implementation_notes),
@@ -1991,6 +1995,53 @@ function selectDesignCandidate(
   return [...candidates].sort((a, b) => b.hypothesis_ids.length - a.hypothesis_ids.length || a.id.localeCompare(b.id))[0];
 }
 
+function normalizeDesignSingleChange(value: string | undefined): string | undefined {
+  const cleaned = value?.replace(/^\s*plan\s+\d+\s*:\s*/iu, "").trim();
+  if (!cleaned) {
+    return undefined;
+  }
+  const firstLine = cleaned.split(/\r?\n/u).map((line) => line.trim()).find(Boolean) || cleaned;
+  return truncateText(firstLine.replace(/\s+/gu, " "), 96);
+}
+
+function buildFallbackSingleChange(
+  hypothesis: DesignInputHypothesis,
+  objectiveProfile: ObjectiveMetricProfile
+): string {
+  const text = [hypothesis.measurement_hint, hypothesis.text, objectiveProfile.primaryMetric].filter(Boolean).join(" ").toLowerCase();
+  if (/\b(?:repeat|replicat|variance|stability|consistent|reproducib)/u.test(text)) {
+    return "Condition-sweep factor under fixed execution budget";
+  }
+  if (/\b(?:baseline|comparator|control)\b/u.test(text)) {
+    return "Candidate condition factor against locked comparator";
+  }
+  return "Primary condition-sweep factor";
+}
+
+function buildFallbackPlanSummary(objectiveMetric: string, retrySummary: string): string {
+  const metric = normalizeDesignMetricName(objectiveMetric) || "the run objective metric";
+  const base = "Evaluate the selected hypothesis through a bounded condition-sweep design against configured baselines, using " + metric + " as the primary measurement.";
+  return retrySummary ? base + " " + retrySummary : base;
+}
+
+function normalizeDesignMetricList(values: string[]): string[] {
+  const normalized = values
+    .map((value) => normalizeDesignMetricName(value))
+    .filter((value): value is string => Boolean(value));
+  return dedupeStrings(normalized);
+}
+
+function normalizeDesignMetricName(value: string | undefined): string | undefined {
+  const cleaned = value?.trim().replace(/\s+/gu, " ");
+  if (!cleaned) {
+    return undefined;
+  }
+  if (cleaned.length > 72 || /[.;:]/u.test(cleaned) || cleaned.split(/\s+/u).length > 6) {
+    return undefined;
+  }
+  return cleaned;
+}
+
 function buildFallbackDesigns(
   hypotheses: DesignInputHypothesis[],
   constraintProfile: ConstraintProfile,
@@ -2007,13 +2058,15 @@ function buildFallbackDesigns(
     const guidance = buildHypothesisDesignGuidance(hypothesis, objectiveProfile);
     const retryNotes = buildFallbackRetryImplementationNotes(retryContext);
     const retrySummary = buildRetrySummary(retryContext, objectiveMetric);
+    const singleChange = buildFallbackSingleChange(hypothesis, objectiveProfile);
     return {
       id: `plan_${index + 1}`,
-      title: `Plan ${index + 1}: ${truncateText(hypothesis.text, 72)}`,
+      title: `Plan ${index + 1}: ${singleChange}`,
       hypothesis_ids: [hypothesis.hypothesis_id],
-      plan_summary: `Test ${hypothesis.text} against configured baselines and evaluate with ${objectiveMetric || "the run objective metric"}.${retrySummary ? ` ${retrySummary}` : ""}`,
+      single_change: singleChange,
+      plan_summary: buildFallbackPlanSummary(objectiveProfile.primaryMetric || objectiveMetric, retrySummary),
       datasets: buildFallbackDatasets(constraintProfile),
-      metrics: dedupeStrings([objectiveMetric || "primary_metric", ...guidance.metrics]),
+      metrics: normalizeDesignMetricList([objectiveProfile.primaryMetric || objectiveMetric || "primary_metric", ...guidance.metrics]),
       baselines: buildFallbackBaselines(guidance, retryContext),
       implementation_notes: [
         ...constraintProfile.experiment.implementationNotes,

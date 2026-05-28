@@ -261,9 +261,12 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         run,
         hypothesis: hypothesisText,
         causalMechanism: panelResult.selected.plan_summary,
-        singleChange: panelResult.selected.title,
+        singleChange: deriveDesignSingleChange(panelResult.selected),
         additionalChanges: [],
-        expectedMetricEffect: `Improve ${run.objectiveMetric} relative to baseline(s): ${panelResult.selected.baselines.join(", ") || "none specified"}.`,
+        expectedMetricEffect: deriveDesignExpectedMetricEffect(
+          objectiveMetricProfile.primaryMetric || run.objectiveMetric,
+          panelResult.selected
+        ),
         abortCondition: panelResult.selected.risks.length > 0
           ? `Abort if: ${panelResult.selected.risks[0]}`
           : "Abort if primary metric degrades significantly or execution fails repeatedly.",
@@ -283,6 +286,19 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
       const contractValidation = validateExperimentContract(experimentContract);
       if (contractValidation.issues.length > 0) {
         emitLog(`Experiment contract notes: ${contractValidation.issues.join("; ")}`);
+      }
+      const blockingContractIssues = contractValidation.issues.filter((issue) =>
+        /missing explicit baseline|potential confounding|confounded attempt/iu.test(issue)
+      );
+      if (blockingContractIssues.length > 0) {
+        const message = `Experiment contract blocked before execution: ${blockingContractIssues.join("; ")}`;
+        emitLog(message);
+        return {
+          status: "failure",
+          error: message,
+          summary: message,
+          toolCallsUsed: 0
+        };
       }
       if (!experimentContract.results_table_schema || experimentContract.results_table_schema.length === 0) {
         const message =
@@ -530,6 +546,23 @@ function parseHypotheses(raw: string): DesignInputHypothesis[] {
       }
     });
   return items.filter((item): item is DesignInputHypothesis => item !== undefined && Boolean(item.text));
+}
+
+function deriveDesignSingleChange(candidate: ExperimentDesignCandidate): string {
+  const explicit = candidate.single_change?.trim();
+  if (explicit) {
+    return explicit;
+  }
+  return candidate.title.replace(/^\s*plan\s+\d+\s*:\s*/iu, "").trim() || candidate.title;
+}
+
+function deriveDesignExpectedMetricEffect(
+  objectiveMetric: string,
+  candidate: ExperimentDesignCandidate
+): string {
+  const metric = objectiveMetric || candidate.metrics[0] || "the primary metric";
+  const baselines = candidate.baselines.join(", ") || "the declared baseline(s)";
+  return "Measure " + metric + " relative to " + baselines + "; keep the interpretation bounded to the observed direction and uncertainty.";
 }
 
 function normalizeCandidateProtocolGuardrails(candidate: ExperimentDesignCandidate): ExperimentDesignCandidate {
@@ -1163,13 +1196,30 @@ function deriveDesignEvidenceCeiling(design: ExperimentDesignCandidate): string 
     ...design.resource_notes,
     ...design.risks
   ];
-  return candidates
+  const matched = candidates
     .map((value) => value.trim())
     .find((value) =>
-      /\b(pilot ceiling|evidence ceiling|claim ceiling|paper-ready|not sufficient|not make a paper-ready|interaction claim|no-interaction ceiling|no-signal)\b/iu.test(
+      /\b(pilot ceiling|evidence ceiling|claim ceiling|paper-ready|not sufficient|not make a paper-ready|interaction claim|no-interaction ceiling|no-signal|fallback design)\b/iu.test(
         value
       )
     );
+  return normalizeDesignCeiling(matched);
+}
+
+function normalizeDesignCeiling(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  if (/\bfallback design\b/iu.test(value)) {
+    return "Fallback-generated design only; require review-node confirmation before paper-ready claims or downstream execution.";
+  }
+  if (/\bpaper-ready\b/iu.test(value) && /\bif\b/iu.test(value)) {
+    return "Bounded condition-sweep evidence only; do not present as paper-ready without complete executed attempts, uncertainty reporting, and confirmatory reruns.";
+  }
+  if (/\bdoes not support\b|\bnot sufficient\b|\bnot make a paper-ready\b|\binteraction claim\b/iu.test(value)) {
+    return "Bounded condition-sweep evidence only; do not infer interactions or broad tuning rules without confirmatory evidence.";
+  }
+  return value;
 }
 
 function deriveDesignPaperCeiling(design: ExperimentDesignCandidate): string | undefined {

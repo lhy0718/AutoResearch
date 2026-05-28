@@ -986,7 +986,10 @@ describe("researchPlanning helpers", () => {
             hypothesis_ids: ["h_1"],
             plan_summary: "Evaluate recovery behavior against a baseline.",
             datasets: ["Benchmark-A"],
-            metrics: [],
+            metrics: [
+              "Primary metric: task success. Secondary metrics: runtime and memory.",
+              "latency"
+            ],
             baselines: [],
             implementation_notes: [],
             evaluation_steps: [],
@@ -1038,6 +1041,8 @@ describe("researchPlanning helpers", () => {
     expect(result.source).toBe("llm");
     expect(result.selected.id).toBe("plan_1");
     expect(result.selected.metrics).toContain("reproducibility");
+    expect(result.selected.metrics).toContain("latency");
+    expect(result.selected.metrics).not.toContain("Primary metric: task success. Secondary metrics: runtime and memory.");
     expect(result.selected.metrics).toContain("run_to_run_variance");
     expect(result.selected.metrics).toContain("artifact_consistency_rate");
     expect(result.selected.baselines).toContain("free_form_chat_baseline");
@@ -1166,6 +1171,9 @@ describe("researchPlanning helpers", () => {
 
     expect(result.source).toBe("fallback");
     expect(result.fallbackReason).toContain("experiment_design_timeout:5ms");
+    expect(result.selected.title).toContain("Condition-sweep factor under fixed execution budget");
+    expect(result.selected.single_change).toBe("Condition-sweep factor under fixed execution budget");
+    expect(result.selected.title).not.toContain("Adaptive stopping improves budget-aware reasoning quality");
     expect(result.selected.plan_summary).toContain("did not improve accuracy_delta_vs_baseline");
     expect(result.selected.evaluation_steps).toContain(
       "Move the next bounded local branch materially closer to the registered pilot scope while keeping the run locally executable."
