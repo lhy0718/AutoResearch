@@ -350,7 +350,7 @@ describe("resultAnalysis", () => {
           },
           {
             name: "candidate_condition_a",
-            condition_type: "peft_adapter_instruction_tuned",
+            condition_type: "adapter_instruction_tuned",
             evaluation: {
               benchmark_task_a: { accuracy: 0.2734375 },
               benchmark_task_b: { accuracy: 0.5234375 }

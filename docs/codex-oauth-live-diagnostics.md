@@ -121,7 +121,7 @@ Interpretation:
   - bootstrap contract completed successfully enough to write `bootstrap_contract_raw_response.txt` (`8762` bytes)
   - the run then progressed into staged file generation and materially expanded the public runner from `44` lines to `1923` lines
   - the remaining long-stall shifted to the later chunk:
-    - `Baseline-first PEFT condition execution and aggregate metric computation`
+    - `Baseline-first adapter condition execution and aggregate metric computation`
   - that chunk timed out after `540s` with no text delta, triggered dynamic resubdivision, and the follow-up resubchunk attempt later ended with:
     - `Implementation execution failed before any runnable implementation was produced: terminated`
 
@@ -142,7 +142,7 @@ Interpretation:
   - materialization planning completed
   - chunk subdivision planning completed for:
     - `Imports, experiment configuration, and reusable helpers`
-    - `Baseline-first PEFT comparison, reporting, and entrypoint`
+    - `Baseline-first adapter comparison, reporting, and entrypoint`
   - file materialization then generated per-chunk prompt and response artifacts
 - Observed prompt artifacts:
   - `unit_chunk_prompts/peft_runner__runner_core_setup__d0__chunk_1_2_subchunk_1_3.txt` (`12910` bytes)

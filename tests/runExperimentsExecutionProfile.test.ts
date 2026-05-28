@@ -382,12 +382,12 @@ describe("run_experiments execution profile behavior", () => {
                   },
                   {
                     name: "candidate_condition_a",
-                    condition_type: "peft_adapter_instruction_tuned",
+                    condition_type: "adapter_instruction_tuned",
                     evaluation: { mean_zero_shot_accuracy: 0.412 }
                   },
                   {
                     name: "candidate_condition_b",
-                    condition_type: "peft_adapter_instruction_tuned",
+                    condition_type: "adapter_instruction_tuned",
                     evaluation: { mean_zero_shot_accuracy: 0.411 }
                   }
                 ]

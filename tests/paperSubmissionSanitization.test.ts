@@ -971,7 +971,7 @@ describe("paper submission sanitization", () => {
           {
             heading: "Discussion",
             paragraphs: [
-              "This cautious interpretation is consistent with prior low-budget adapter and PEFT studies (e.g., quantized adapter and related benchmarking work) that also treat adapter configuration as consequential, while recognizing that the present study is much smaller and less stable than the settings used in broader adaptation papers.",
+              "This cautious interpretation is consistent with prior low-budget adapter and adapter studies (e.g., quantized adapter and related benchmarking work) that also treat adapter configuration as consequential, while recognizing that the present study is much smaller and less stable than the settings used in broader adaptation papers.",
               "The main report records a positive screening result: accuracy delta versus baseline was 0.083332 against the predeclared 0.01 target, with the leading condition cell supplying the strongest observed gain.",
               "The current evidence is most actionable as a cautious benchmark note for this fixed-budget condition-parameter pilot, especially where the best observed cell clears the pre-specified screening threshold.",
               "The leading condition cell improved accuracy delta versus the locked baseline by 0.0833 in the reported comparison."
@@ -1069,8 +1069,8 @@ describe("paper submission sanitization", () => {
       corpus: [
         {
           paper_id: "paper_peft",
-          title: "Budget-aware PEFT study",
-          abstract: "PEFT study.",
+          title: "Budget-aware adapter study",
+          abstract: "adapter study.",
           authors: ["Alice Doe"],
           year: 2025,
           venue: "TestConf"

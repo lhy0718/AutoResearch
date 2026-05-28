@@ -39,7 +39,7 @@ describe("planned condition coverage", () => {
           evaluation: { primary_mean_accuracy: 0.525 }
         },
         candidate_condition_b: {
-          type: "peft_adapter_instruction_tuned",
+          type: "adapter_instruction_tuned",
           train: {
             trainable_params: 2252800,
             recipe: { name: "candidate_condition_b" }
@@ -47,7 +47,7 @@ describe("planned condition coverage", () => {
           evaluation: { primary_mean_accuracy: 0.4875 }
         },
         candidate_condition_a: {
-          type: "peft_adapter_instruction_tuned",
+          type: "adapter_instruction_tuned",
           train: {
             trainable_params: 1126400,
             recipe: { name: "candidate_condition_a" }

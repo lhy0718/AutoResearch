@@ -418,12 +418,12 @@ describe("objectiveMetric", () => {
           evaluation: { primary_mean_accuracy: 0.525 }
         },
         candidate_condition_b: {
-          type: "peft_adapter_instruction_tuned",
+          type: "adapter_instruction_tuned",
           evaluation: { primary_mean_accuracy: 0.4875 },
           train: { trainable_params: 2252800 }
         },
         candidate_condition_a: {
-          type: "peft_adapter_instruction_tuned",
+          type: "adapter_instruction_tuned",
           evaluation: { primary_mean_accuracy: 0.5125 },
           train: { trainable_params: 1126400 }
         }
@@ -456,12 +456,12 @@ describe("objectiveMetric", () => {
             evaluation: { primary_mean_accuracy: 0.525 }
           },
           candidate_condition_b: {
-            type: "peft_adapter_instruction_tuned",
+            type: "adapter_instruction_tuned",
             evaluation: { primary_mean_accuracy: 0.4875 },
             train: { trainable_params: 2252800 }
           },
           candidate_condition_a: {
-            type: "peft_adapter_instruction_tuned",
+            type: "adapter_instruction_tuned",
             evaluation: { primary_mean_accuracy: 0.5125 },
             train: { trainable_params: 1126400 }
           }
@@ -624,7 +624,7 @@ describe("objectiveMetric", () => {
           },
           {
             name: "candidate_condition_a",
-            condition_type: "peft_adapter_instruction_tuned",
+            condition_type: "adapter_instruction_tuned",
             evaluation: { mean_zero_shot_accuracy: 0.3984375 }
           }
         ]

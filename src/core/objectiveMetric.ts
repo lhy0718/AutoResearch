@@ -510,7 +510,7 @@ export function synthesizeRelativeMetrics(
     }
   }
 
-  // Strategy 4: recipe/condition result rows, e.g. PEFT runners that emit
+  // Strategy 4: recipe/condition result rows, e.g. adapter-style runners that emit
   // `results: [{ recipe, kind, mean_zero_shot_accuracy, ... }]`.
   const results = metrics.results;
   if (Array.isArray(results) && results.length >= 2) {

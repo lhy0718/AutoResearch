@@ -3801,7 +3801,7 @@ describe("objective metric propagation", () => {
             },
             {
               name: "candidate_condition_a",
-              condition_type: "peft_adapter_instruction_tuned",
+              condition_type: "adapter_instruction_tuned",
               evaluation: {
                 benchmark_task_a: { accuracy: 0.2734375 },
                 benchmark_task_b: { accuracy: 0.5234375 }
@@ -3810,7 +3810,7 @@ describe("objective metric propagation", () => {
             },
             {
               name: "candidate_condition_b",
-              condition_type: "peft_adapter_instruction_tuned",
+              condition_type: "adapter_instruction_tuned",
               evaluation: {
                 benchmark_task_a: { accuracy: 0.265625 },
                 benchmark_task_b: { accuracy: 0.53125 }

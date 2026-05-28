@@ -8683,7 +8683,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Do Not Reuse Bad Baseline Bundle",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "at least +1.0 percentage point over the named tuned baseline"
     });
@@ -12469,7 +12469,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Bootstrap Contract Block Run",
-      topic: "PEFT instruction tuning baseline study",
+      topic: "adapter instruction tuning baseline study",
       constraints: ["real artifacts"],
       objectiveMetric: "accuracy"
     });
@@ -12602,7 +12602,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Noisy Bootstrap Contract Run",
-      topic: "PEFT instruction tuning baseline study",
+      topic: "adapter instruction tuning baseline study",
       constraints: ["real artifacts"],
       objectiveMetric: "accuracy"
     });
@@ -12950,7 +12950,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Generated Output Bootstrap Contract Run",
-      topic: "PEFT instruction tuning baseline study",
+      topic: "adapter instruction tuning baseline study",
       constraints: ["real artifacts"],
       objectiveMetric: "accuracy"
     });
@@ -19663,7 +19663,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Repair Baseline Execution Candidate",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -19869,7 +19869,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Repair Undefined Parameter Annotation",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "accuracy"
     });
@@ -19968,7 +19968,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Repair Missing Typing Alias Annotation",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "accuracy_delta_vs_baseline"
     });
@@ -20061,7 +20061,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Repair Undefined Slugify",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "accuracy"
     });
@@ -20170,7 +20170,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Repair Undefined Runtime Helper",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "accuracy"
     });
@@ -20266,7 +20266,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Repair Ensure Dir Helper",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "accuracy"
     });
@@ -20358,7 +20358,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Repair Ensure Directory Alias",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "accuracy"
     });
@@ -20456,7 +20456,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Repair Ensure Parent Dir Alias",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "accuracy"
     });
@@ -20555,7 +20555,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Repair Parent Helper Return",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "accuracy"
     });
@@ -20730,7 +20730,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Repair Safe Mkdir Alias",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "accuracy"
     });
@@ -25638,7 +25638,7 @@ describe("ImplementSessionManager", () => {
         "        'run_all_conditions',",
         "    )",
         "    if condition_runner is None:",
-        "        raise RuntimeError('No condition execution helper is available; cannot run the baseline-first PEFT study.')",
+        "        raise RuntimeError('No condition execution helper is available; cannot run the baseline-first adapter study.')",
         "    rows = _call_with_compatible_signature(",
         "        condition_runner,",
         "        args=args,",
@@ -26971,7 +26971,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Reject Helper Only Runner",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "accuracy"
     });
@@ -27052,7 +27052,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Repair Undefined Execution Helper",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "accuracy"
     });
@@ -31530,7 +31530,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Private Run Dir Argparse Alias",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -31627,7 +31627,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Model Name Argparse Destination",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -31729,7 +31729,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Run Command Argparse Alias",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -32250,7 +32250,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Repair Standard Runtime Flags",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -32405,7 +32405,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Flexible Duplicate Args",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -32501,7 +32501,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Flexible Signature Filter",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -32622,7 +32622,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Condition Adapter Args",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "accuracy_delta_vs_baseline"
     });
@@ -34524,7 +34524,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Repair AdapterRecipe Compatibility",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "accuracy"
     });
@@ -34758,7 +34758,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Repair RecipeSpec adapter_type",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "accuracy"
     });
@@ -34873,7 +34873,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Repair RecipeSpec required-field coercion",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "accuracy"
     });
@@ -35669,7 +35669,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Accept Workflow Alias",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -35759,7 +35759,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Reject Missing Study Orchestration",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -35862,7 +35862,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Reject Missing Experiment Orchestration",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -35966,7 +35966,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Reject Missing AutoLabOS Orchestration",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -36058,7 +36058,7 @@ describe("ImplementSessionManager", () => {
     expect(calls).toBe(3);
   });
 
-  it("rejects python runners whose baseline-first PEFT entrypoint resolver misses the generated study helper", async () => {
+  it("rejects python runners whose baseline-first adapter entrypoint resolver misses the generated study helper", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-missing-baseline-first-peft-helper-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
@@ -36068,7 +36068,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Reject Missing Baseline First PEFT Helper",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -36089,7 +36089,7 @@ describe("ImplementSessionManager", () => {
         return {
           threadId: "thread-missing-baseline-first-peft-helper",
           finalText: JSON.stringify({
-            summary: "Implemented a runner whose entrypoint resolver misses the generated PEFT study helper.",
+            summary: "Implemented a runner whose entrypoint resolver misses the generated adapter study helper.",
             run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`,
             test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
             working_dir: publicDir,
@@ -36178,7 +36178,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Reject Missing Final Baseline Runner",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -36288,7 +36288,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Reject Missing Completed Sections Study Helper",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -36393,7 +36393,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Reject Missing Required Functions Dispatcher",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -36592,7 +36592,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Reject Missing Condition Worker",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "accuracy_delta_vs_baseline"
     });
@@ -36715,7 +36715,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Reject Unguarded Optional Helper",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -36799,7 +36799,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Retry Materialization Failure",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -36891,7 +36891,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Reject Missing Benchmark Evaluator Dispatch",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -36991,7 +36991,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Reject Missing Zero Shot Evaluator",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -37188,7 +37188,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Reject Required Helper Benchmark Evaluator Dispatch",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -37298,7 +37298,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Reject Missing Benchmark Loader Dispatch",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -37393,7 +37393,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Reject Missing Run Benchmark Loader Dispatch",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -37491,7 +37491,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Reject Missing Benchmark Bundle Loader Dispatch",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -37597,7 +37597,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Reject Missing ARC Benchmark Task B Loader Dispatch",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -37722,7 +37722,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Reject Device Metrics Arity Mismatch",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -37819,7 +37819,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Reject Metrics Writer Adapter Mismatch",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -37928,7 +37928,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Reject Metrics Writer Path Adapter Mismatch",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -38032,7 +38032,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Reject RuntimeConfig Metrics Writer Adapter Mismatch",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -38138,7 +38138,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Reject EvaluationSample Dict Access",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -38243,7 +38243,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Reject Invoke Helper Dispatch Mismatch",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -40668,7 +40668,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Reject Atomic JSON Call Order",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -40764,7 +40764,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Reject Globals Helper Arity",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -40852,7 +40852,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Reject Undefined Normalize Helper",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -40943,7 +40943,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Reject Dict Recipe Attribute Access",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -41032,7 +41032,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Reject RecipeSpec Constructor Mismatch",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -41923,7 +41923,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Reject untuned primary baseline",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "at least +1.0 percentage point over the named tuned baseline"
     });
@@ -42107,7 +42107,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Repair Global Seed Alias",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "accuracy"
     });
@@ -42198,7 +42198,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Repair Nonrecursive Global Seed Alias",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "accuracy"
     });
@@ -42285,7 +42285,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Repair Setup Runtime Seed Alias",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "accuracy"
     });
@@ -42373,7 +42373,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Repair Reproducible Seed Alias",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "accuracy"
     });
@@ -42458,7 +42458,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Repair All Seeds Alias",
-      topic: "PEFT instruction tuning",
+      topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "accuracy"
     });

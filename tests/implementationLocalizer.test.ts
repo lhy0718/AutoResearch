@@ -209,8 +209,8 @@ describe("ImplementationLocalizer", () => {
     const localizer = new ImplementationLocalizer(new LocalAciAdapter());
     const result = await localizer.localize({
       workspaceRoot: workspace,
-      goal: "Repair the generated PEFT runner after run_experiments failed.",
-      topic: "peft instruction tuning repair",
+      goal: "Repair the generated adapter runner after run_experiments failed.",
+      topic: "adapter instruction tuning repair",
       objectiveMetric: "accuracy_delta_vs_baseline",
       constraints: [],
       planExcerpt: "Fix the generated experiment runner in the active output bundle.",

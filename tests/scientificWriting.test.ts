@@ -607,7 +607,7 @@ describe("scientificWriting", () => {
         "selected_design:",
         '  title: "condition parameters under fixed budget instruction tuning"',
         '  model: "the selected backbone"',
-        '  method: "adapter PEFT instruction tuning"',
+        '  method: "adapter instruction tuning"',
         "  datasets:",
         '    - "Benchmark Task A"',
         '    - "Benchmark Task B"'

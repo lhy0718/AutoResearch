@@ -12118,7 +12118,7 @@ function shouldRequireExplicitBootstrapPlanning(
     .toLowerCase();
   return (
     taskSpec.context.comparison_contract?.comparison_mode === "baseline_first_locked" ||
-    /(peft|huggingface|transformer|tokenizer|language model|autotokenizer|automodelforcausallm)/u.test(
+    /(peft|adapter|instruction tuning|condition grid|condition sweep|huggingface|transformer|tokenizer|language model|autotokenizer|automodelforcausallm)/u.test(
       signals
     )
   );
@@ -42181,7 +42181,7 @@ export async function repairPythonLockedRecipeCatalogAliasSurface(scriptPath?: s
     !source.includes("def locked_recipe_execution_order(") ||
     !source.includes("def _recipe_catalog_from_globals(") ||
     !source.includes("BASELINE_UNMODIFIED_RECIPE_ID") ||
-    !source.includes("STANDARD_TUNED_BASELINE_RECIPE_ID") ||
+    !(source.includes("STANDARD_TUNED_BASELINE_RECIPE_ID") || source.includes("VANILLA_LORA_BASELINE_RECIPE_ID") || source.includes("LOCKED_LORA_BASELINE_CANDIDATE_ID")) ||
     source.includes("_autolabos_locked_recipe_catalog_alias_marker")
   ) {
     return { repaired: false };
@@ -42198,7 +42198,13 @@ export async function repairPythonLockedRecipeCatalogAliasSurface(scriptPath?: s
     return { repaired: false };
   }
 
-  const helperNeedle = 'STANDARD_TUNED_BASELINE_RECIPE_ID = "standard_tuned_baseline"\n';
+  const helperNeedle = source.includes('STANDARD_TUNED_BASELINE_RECIPE_ID = "standard_tuned_baseline"\n')
+    ? 'STANDARD_TUNED_BASELINE_RECIPE_ID = "standard_tuned_baseline"\n'
+    : source.includes('VANILLA_LORA_BASELINE_RECIPE_ID = "vanilla_adapter_baseline"\n')
+      ? 'VANILLA_LORA_BASELINE_RECIPE_ID = "vanilla_adapter_baseline"\n'
+      : source.includes('LOCKED_LORA_BASELINE_CANDIDATE_ID = "locked_candidate_condition"\n')
+        ? 'LOCKED_LORA_BASELINE_CANDIDATE_ID = "locked_candidate_condition"\n'
+        : "";
   if (!source.includes(helperNeedle)) {
     return { repaired: false };
   }
@@ -42208,7 +42214,7 @@ export async function repairPythonLockedRecipeCatalogAliasSurface(scriptPath?: s
     "def _autolabos_locked_recipe_catalog_alias_marker():",
     "    return True",
     "",
-    "def _autolabos_recipe_catalog_row(recipe_id: str, raw: Any, expected_order: int) -> Dict[str, Any]:",
+    "def _autolabos_recipe_catalog_row(recipe_id, raw, expected_order):",
     "    \"\"\"Normalize dataclass- or mapping-backed recipe registries without changing execution IDs.\"\"\"",
     "    if isinstance(raw, Mapping):",
     "        row = dict(raw)",
@@ -42231,13 +42237,13 @@ export async function repairPythonLockedRecipeCatalogAliasSurface(scriptPath?: s
     "        row.setdefault(\"train\", True)",
     "    return row",
     "",
-    "def _autolabos_recipe_is_unmodified_base(recipe_id: str, config: Mapping[str, Any]) -> bool:",
+    "def _autolabos_recipe_is_unmodified_base(recipe_id, config):",
     "    lowered = str(config.get(\"recipe_id\", config.get(\"candidate_id\", recipe_id))).lower().replace(\"-\", \"_\")",
     "    peft_type = str(config.get(\"peft_type\", config.get(\"recipe_type\", \"\"))).lower().replace(\"-\", \"_\")",
     "    family = str(config.get(\"family\", \"\")).lower().replace(\"-\", \"_\")",
     "    return bool(config.get(\"is_unmodified_base\")) or (\"unmodified\" in lowered and \"base\" in lowered) or peft_type in {\"none\", \"base\", \"no_adapter\"} or family == \"base_model_reference\"",
     "",
-    "def _autolabos_recipe_is_locked_tuned_baseline(recipe_id: str, config: Mapping[str, Any]) -> bool:",
+    "def _autolabos_recipe_is_locked_tuned_baseline(recipe_id, config):",
     "    lowered = str(config.get(\"recipe_id\", config.get(\"candidate_id\", recipe_id))).lower().replace(\"-\", \"_\")",
     "    peft_type = str(config.get(\"peft_type\", config.get(\"recipe_type\", \"\"))).lower().replace(\"-\", \"_\")",
     "    family = str(config.get(\"family\", \"\")).lower().replace(\"-\", \"_\")",
@@ -42399,7 +42405,8 @@ export async function repairPythonBroaderTargetAdapterMarkerSurface(scriptPath?:
     /missing = \[label for marker, label in required_markers\.values\(\) if marker not in present\]/u,
     [
       "marker_aliases = {",
-      "            \"broad\": (\"broad\", \"broader\", \"mlp\", \"qkvo\", \"all_linear\", \"expanded\"),",
+      "            \"condition_b\": (\"condition_b\", \"locked_candidate\", \"standard\", \"baseline\"),",
+      "            \"broad\": (\"broad\", \"broader\", \"mlp\", \"qkvo\", \"all_linear\", \"expanded\", \"extended\", \"condition_extended\"),",
       "        }",
       "        missing = [",
       "            label",
@@ -42554,7 +42561,7 @@ async function detectPythonBaselineFirstTunedBaselineMismatch(scriptPath?: strin
     /\bRecipe\s*\(\s*name\s*=\s*["']baseline_no_tuning["'][\s\S]{0,180}\bkind\s*=\s*["']baseline["']/u.test(source) ||
     /\bbaseline\s*=\s*next\s*\([\s\S]{0,400}\.recipe\s*==\s*["']baseline_no_tuning["']/u.test(source) ||
     /\bbaseline_mean_[A-Za-z0-9_]*\s*=\s*baseline\./u.test(source);
-  const hasTunedAdapterCandidate = /\badapter_r(?:8|16|32)\b/u.test(source) || /standard[_-]?adapter/iu.test(source);
+  const hasTunedAdapterCandidate = /\badapter_r(?:8|16|32)\b/u.test(source) || /standard[_-]?adapter/iu.test(source) || /candidate_condition_[a-z0-9_]*[\s\S]{0,220}kind\s*[:=]\s*["']adapter["']/iu.test(source);
   if (!hasUntunedPrimaryBaseline || !hasTunedAdapterCandidate) {
     return undefined;
   }

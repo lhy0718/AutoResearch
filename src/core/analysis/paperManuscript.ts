@@ -1204,11 +1204,11 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       headingKey === "method" ? "" : "Evaluation spans Benchmark Task A and Benchmark Task B."
     )
     .replace(
-      /\bThis cautious interpretation is consistent with prior low-budget adapter and PEFT studies \(e\.g\.,\s*quantized adapter and related benchmarking work\) that also treat adapter configuration as consequential,\s*while recognizing that the present study is much smaller and less stable than the settings used in broader adaptation papers\./giu,
+      /\bThis cautious interpretation is consistent with prior low-budget adapter and (?:PEFT|adapter) studies \(e\.g\.,\s*quantized adapter and related benchmarking work\) that also treat adapter configuration as consequential,\s*while recognizing that the present study is much smaller and less stable than the settings used in broader adaptation papers\./giu,
       "This cautious interpretation is consistent with prior PEFT studies that treat adapter configuration as consequential, while recognizing that the present study is much smaller and less stable than broader adaptation settings."
     )
     .replace(
-      /\bThis cautious interpretation is consistent with prior low-budget adapter and PEFT studies \(e\.g\.,\s*quantized adapter and related benchmarking work\)/giu,
+      /\bThis cautious interpretation is consistent with prior low-budget adapter and (?:PEFT|adapter) studies \(e\.g\.,\s*quantized adapter and related benchmarking work\)/giu,
       "This cautious interpretation is consistent with prior PEFT studies"
     )
     .replace(
