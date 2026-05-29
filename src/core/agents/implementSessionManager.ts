@@ -7346,6 +7346,54 @@ export class ImplementSessionManager {
     }
 
 
+    const candidateCallablePartialBindRepair =
+      await repairPythonIssueAcrossSurfaces(
+        pythonVerificationSurfacePaths,
+        repairPythonCandidateCallablePartialBindSurface
+      );
+    if (candidateCallablePartialBindRepair.repaired) {
+      onProgress?.(
+        candidateCallablePartialBindRepair.message ||
+          "Repaired candidate callable invocation so partial signature matches do not select incompatible helpers.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            candidateCallablePartialBindRepair.message ||
+            "Repaired candidate callable invocation so partial signature matches do not select incompatible helpers."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
     const outputDirArgparseRepair = await repairPythonOutputDirArgparseAlias(
       executionScriptPath,
       attempt.runCommand
@@ -40727,6 +40775,48 @@ export async function repairPythonFindFirstCallableClassSelectionSurface(scriptP
   return {
     repaired: true,
     message: `Constrained _find_first_callable to executable functions in ${path.basename(scriptPath)} so run-plan dataclasses are not selected as orchestration helpers.`
+  };
+}
+
+export async function repairPythonCandidateCallablePartialBindSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_candidate_callable_strict_bind_marker";
+  if (
+    source.includes(marker) ||
+    !source.includes("def _invoke_candidate_callable(") ||
+    !source.includes("bind_partial") ||
+    !source.includes("candidate_names")
+  ) {
+    return { repaired: false };
+  }
+
+  let nextSource = source.replace(
+    /^def _invoke_candidate_callable\(/mu,
+    (match: string) => `# ${marker}\n${match}`
+  );
+  nextSource = nextSource.replace(/inspect\.signature\(func\)\.bind_partial\(/gu, "inspect.signature(func).bind(");
+
+  if (nextSource === source || !nextSource.includes(marker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Constrained candidate callable invocation in ${path.basename(scriptPath)} to full signature matches so low-level helpers are not selected by keyword discovery.`
   };
 }
 

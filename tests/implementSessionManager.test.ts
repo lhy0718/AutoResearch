@@ -215,6 +215,7 @@ import {
   repairPythonImportedHelperRunnerResolverSurface,
   repairPythonCallableResolverClassSelectionSurface,
   repairPythonFindFirstCallableClassSelectionSurface,
+  repairPythonCandidateCallablePartialBindSurface,
   applyImplementationContractLocalizationGuard,
   applyRunnerFeedbackLocalizationGuard,
   repairPythonStudyInvokeContractKwargSurface,
@@ -16330,6 +16331,72 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("_autolabos_callable_resolver_skip_classes_marker");
     expect(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" })).toContain(
       "baseline_condition"
+    );
+  });
+
+  it("repairs candidate callable invokers that accept partial signature matches", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-candidate-callable-bind-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+
+    writeFileSync(
+      scriptPath,
+      [
+        "from typing import Any, Mapping, Optional, Sequence",
+        "import inspect",
+        "",
+        "def preflight_base_model(model_name: str, *, local_files_only: bool):",
+        "    return {'status': 'low_level'}",
+        "",
+        "def _discover_callable_names(explicit_names: Sequence[str], keyword_groups: Sequence[tuple[str, ...]]) -> list[str]:",
+        "    discovered = []",
+        "    for name, obj in globals().items():",
+        "        lowered = name.lower()",
+        "        if name.startswith('_') or not callable(obj) or inspect.isclass(obj):",
+        "            continue",
+        "        if any(all(keyword in lowered for keyword in group) for group in keyword_groups):",
+        "            discovered.append(name)",
+        "    return discovered",
+        "",
+        "def _invoke_candidate_callable(candidate_names: Sequence[str], *, keyword_attempts: Optional[Sequence[Mapping[str, Any]]] = None, positional_attempts = None, allow_missing: bool = False) -> Any:",
+        "    for candidate_name in candidate_names:",
+        "        func = globals().get(candidate_name)",
+        "        if func is None or inspect.isclass(func) or not callable(func):",
+        "            continue",
+        "        if keyword_attempts:",
+        "            for keyword_attempt in keyword_attempts:",
+        "                try:",
+        "                    inspect.signature(func).bind_partial(**keyword_attempt)",
+        "                except TypeError:",
+        "                    continue",
+        "                return func(**keyword_attempt)",
+        "    if allow_missing:",
+        "        return None",
+        "    raise LookupError('missing')",
+        "",
+        "def main():",
+        "    candidates = _discover_callable_names((), ((\"preflight\",), (\"model\", \"preflight\")))",
+        "    result = _invoke_candidate_callable(candidates, keyword_attempts=({'model_name': 'candidate-model'},), allow_missing=True)",
+        "    print(result)",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" })).toThrow(
+      /missing 1 required keyword-only argument/
+    );
+
+    const repair = await repairPythonCandidateCallablePartialBindSurface(scriptPath);
+
+    expect(repair.repaired).toBe(true);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repairedSource).toContain("_autolabos_candidate_callable_strict_bind_marker");
+    expect(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim()).toBe(
+      "None"
     );
   });
 
