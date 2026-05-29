@@ -816,6 +816,93 @@ describe("run_experiments execution profile behavior", () => {
     expect(restoredPath).toContain("preexisting_metrics_");
   });
 
+  it("rejects zero-exit runtime tracebacks instead of recovering stale public metrics", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-zero-exit-stale-public-metrics-"));
+    process.chdir(root);
+    const run = makeRun("run-zero-exit-stale-public-metrics");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    const publicDir = path.join(root, "outputs", "neutral-study", "experiment");
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await mkdir(publicDir, { recursive: true });
+
+    const previousMetrics = {
+      status: "completed",
+      primary_metric_key: "quality_delta",
+      quality_delta: 0.04,
+      completed_condition_count: 2,
+      required_condition_count: 2,
+      condition_results: [
+        { condition_marker: "baseline_condition", status: "completed", average_accuracy: 0.5 },
+        { condition_marker: "candidate_condition_a", status: "completed", average_accuracy: 0.54 }
+      ]
+    };
+    await writeFile(path.join(runDir, "metrics.json"), JSON.stringify(previousMetrics, null, 2), "utf8");
+    await writeFile(
+      path.join(publicDir, "metrics.json"),
+      JSON.stringify(
+        {
+          status: "completed",
+          primary_metric_key: "quality_delta",
+          quality_delta: 0,
+          completed_condition_count: 2,
+          required_condition_count: 2,
+          condition_results: [
+            { condition_marker: "baseline_condition", status: "completed", average_accuracy: 0.5 },
+            { condition_marker: "candidate_condition_a", status: "completed", average_accuracy: 0.5 }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 generated_runner.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.public_dir", publicDir);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: [
+            "Experiment execution failed before normal finalization.",
+            "Traceback (most recent call last):",
+            "TypeError: _as_path() missing 1 required positional argument: fallback"
+          ].join("\n"),
+          exit_code: 0,
+          duration_ms: 5
+        }),
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("fatal stderr despite zero exit status");
+    expect(result.error).toContain("_as_path()");
+    const restoredMetrics = JSON.parse(await readFile(path.join(runDir, "metrics.json"), "utf8"));
+    expect(restoredMetrics).toMatchObject(previousMetrics);
+    await expect(runContext.get("run_experiments.recovered_public_metrics_path")).resolves.toBeUndefined();
+  });
+
   it("surfaces string metrics error before stale failure artifact evidence", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-string-metrics-error-"));
     process.chdir(root);

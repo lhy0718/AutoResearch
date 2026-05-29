@@ -654,6 +654,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           }
         });
 
+        const commandStartedAtMs = Date.now();
         obs = await deps.aci.runCommand(primaryCommand, resolved.cwd, abortSignal);
         logFile = await writeRunArtifact(
           run,
@@ -775,10 +776,92 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         }
 
         let metricsExists = await fileExists(resolved.metricsPath);
+        const zeroExitRuntimeFailure = !metricsExists
+          ? detectZeroExitRuntimeFailure(obs.stderr || "")
+          : undefined;
+        if (zeroExitRuntimeFailure) {
+          const failureSummary =
+            `${zeroExitRuntimeFailure} The command exited successfully but did not write required metrics at ${resolved.metricsPath}.`;
+          const triage = classifyRunExperimentsFailure({
+            attempt: attemptNumber,
+            stage: "command",
+            summary: failureSummary,
+            command: primaryCommand,
+            cwd: resolved.cwd,
+            exitCode: obs.exit_code ?? 0,
+            logFile,
+            metricsPath: resolved.metricsPath
+          });
+          triageAttempts.push(triage);
+          watchdog = setMetricsState(watchdog, "missing", logFile);
+          rerunDecision = decideRunExperimentsRerun({
+            triage,
+            automaticRerunsUsed
+          });
+          await persistPanelState();
+          const report = buildRunVerifierReport({
+            status: "fail",
+            trigger,
+            stage: "command",
+            summary: failureSummary,
+            command: primaryCommand,
+            cwd: resolved.cwd,
+            metricsPath: resolved.metricsPath,
+            exitCode: obs.exit_code ?? 0,
+            stdout: obs.stdout,
+            stderr: failureSummary,
+            logFile,
+            suggestedNextAction:
+              "Repair the experiment command so runtime exceptions fail the process or write a failed metrics payload to the required metrics path."
+          });
+          deps.eventStream.emit({
+            type: "TEST_FAILED",
+            runId: run.id,
+            node: "run_experiments",
+            agentRole: "runner",
+            payload: {
+              command: primaryCommand,
+              metrics_path: resolved.metricsPath,
+              stderr: failureSummary
+            }
+          });
+          await persistRunVerifierReport(run, runContext, report);
+          await persistRunFailureState(runContext, {
+            command: primaryCommand,
+            cwd: resolved.cwd,
+            logFile,
+            exitCode: obs.exit_code ?? 0,
+            error: failureSummary
+          });
+          await persistGovernanceCrash({
+            run,
+            runContext,
+            comparisonContract,
+            implementationContext,
+            objectiveMetricName: run.objectiveMetric,
+            rationale: report.summary,
+            resourceUsage: {
+              stage: "command",
+              command: primaryCommand,
+              cwd: resolved.cwd,
+              exit_code: obs.exit_code ?? 0,
+              log_file: logFile,
+              metrics_path: resolved.metricsPath
+            }
+          });
+          await recordRunFailure(failureSummary, "structural");
+          await restoreMetricsAfterRejectedAttempt(failureSummary);
+          return {
+            status: "failure",
+            error: failureSummary,
+            toolCallsUsed: preflightToolCallsUsed + primaryAttemptsUsed
+          };
+        }
         const recoveredPublicMetricsPath = await recoverPublicBundleMetricsOutput({
           runContext,
           workspaceRoot: process.cwd(),
-          metricsPath: resolved.metricsPath
+          metricsPath: resolved.metricsPath,
+          minModifiedAtMs: commandStartedAtMs
         });
         if (recoveredPublicMetricsPath) {
           metricsExists = true;
@@ -1447,6 +1530,19 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
       };
   }
 };
+}
+
+function detectZeroExitRuntimeFailure(stderr: string): string | undefined {
+  const normalized = stderr.trim();
+  if (!normalized) {
+    return undefined;
+  }
+  const fatalPattern = /(?:Experiment execution failed before normal finalization|Traceback \(most recent call last\)|(?:TypeError|RuntimeError|ValueError|AttributeError|ModuleNotFoundError|ImportError):)/u;
+  if (!fatalPattern.test(normalized)) {
+    return undefined;
+  }
+  const excerpt = normalized.replace(/\s+/gu, " ").slice(0, 600);
+  return `Experiment command emitted fatal stderr despite zero exit status: ${excerpt}`;
 }
 
 function detectSentinelWatchdogFindings(
@@ -2689,6 +2785,7 @@ async function recoverPublicBundleMetricsOutput(input: {
   runContext: RunContextMemory;
   workspaceRoot: string;
   metricsPath: string;
+  minModifiedAtMs?: number;
 }): Promise<string | undefined> {
   const existingMetrics = await readMetricsObject(input.metricsPath, input.workspaceRoot);
   const publicDir = resolveMaybeRelative(
@@ -2705,6 +2802,10 @@ async function recoverPublicBundleMetricsOutput(input: {
   ];
   for (const candidate of candidates) {
     if (candidate === input.metricsPath || !(await fileExists(candidate))) {
+      continue;
+    }
+    const candidateStat = await fs.stat(candidate).catch(() => undefined);
+    if (input.minModifiedAtMs !== undefined && candidateStat && candidateStat.mtimeMs + 1000 < input.minModifiedAtMs) {
       continue;
     }
     const metrics = await readMetricsObject(candidate, input.workspaceRoot);
