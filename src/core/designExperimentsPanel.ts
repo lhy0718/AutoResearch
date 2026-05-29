@@ -209,14 +209,14 @@ function isLikelyObjectiveDrift(
   ].join(" ").toLowerCase();
   const titleSummaryText = [candidate.title, candidate.plan_summary].join(" ").toLowerCase();
   const modelQualityObjective =
-    /\b(accuracy|pass@?1|f1|auc|rouge|bleu|mmlu|benchmark_task_b|arc|gsm8k|benchmark|score|quality)\b/u.test(objectiveText);
+    /\b(accuracy|pass@?1|f1|auc|rouge|bleu|benchmark|task|dataset|eval(?:uation)?|score|quality)\b/u.test(objectiveText);
   const reportingAuditSurface =
     /\b(report|reporting|renderer|rendering|claim|claims|gating|gate|integrity|mismatch|downgrade|visibility|audit)\b/u.test(candidateText);
   const explicitlyNotModelQuality =
     /\bnot\s+a\s+model[- ]quality\s+experiment\b/u.test(candidateText) ||
     /\bdoes\s+not\s+answer\s+the\s+model[- ]quality\s+hypothesis\b/u.test(candidateText);
   const modelExperimentSurface =
-    /\b(adapter|rank|dropout|factorial|arc|benchmark_task_b|training condition|train\/eval)\b/u.test(candidateText);
+    /\b(adapter|factorial|benchmark|task|dataset|training condition|train\/eval|condition sweep|parameter sweep)\b/u.test(candidateText);
   const primaryQualityMetric = candidate.metrics
     .slice(0, 2)
     .some((metric) => /\b(avg accuracy|mean accuracy|accuracy|f1|auc|rouge|bleu|pass@?1|delta.*baseline)\b/u.test(metric.toLowerCase().replace(/[_-]+/g, " ")));
