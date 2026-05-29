@@ -178,6 +178,7 @@ import {
   repairPythonLockedStudySpecCollectionAliasSurface,
   repairPythonCoerceFloatFieldNameDefaultSurface,
   repairPythonCoerceIntDefaultArgumentSurface,
+  repairPythonCoerceIntRequiredDefaultSurface,
   repairPythonResolveDeviceNameAritySurface,
   repairPythonAdapterSeedTrainEvalAssemblySurface,
   repairPythonRecipeExecutionOrchestratorAlias,
@@ -215,6 +216,7 @@ import {
   repairPythonImportedHelperRunnerResolverSurface,
   repairPythonCallableResolverClassSelectionSurface,
   repairPythonFindFirstCallableClassSelectionSurface,
+  repairPythonOrchestratorFindCallableClassSelectionSurface,
   repairPythonCandidateCallablePartialBindSurface,
   applyImplementationContractLocalizationGuard,
   applyRunnerFeedbackLocalizationGuard,
@@ -16331,6 +16333,105 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("_autolabos_callable_resolver_skip_classes_marker");
     expect(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" })).toContain(
       "baseline_condition"
+    );
+  });
+
+  it("repairs orchestrator callable fallbacks that select dataclass classes", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-orchestrator-callable-class-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import dataclass",
+        "from typing import Any, Optional, Sequence",
+        "",
+        "@dataclass(frozen=True)",
+        "class RuntimePreflightContext:",
+        "    started_at_unix: float",
+        "    selected_device: str",
+        "",
+        "def build_runtime_preflight(args=None):",
+        "    return {'status': 'ok', 'helper': 'build_runtime_preflight'}",
+        "",
+        "def _orchestrator_find_callable(candidate_names: Sequence[str], *, includes: Sequence[str] = (), excludes: Sequence[str] = ()) -> Optional[Any]:",
+        "    for name in candidate_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    for name, candidate in globals().items():",
+        "        if not callable(candidate):",
+        "            continue",
+        "        lowered = str(name).lower()",
+        "        if includes and not all(token in lowered for token in includes):",
+        "            continue",
+        "        if excludes and any(token in lowered for token in excludes):",
+        "            continue",
+        "        return candidate",
+        "    return None",
+        "",
+        "def main():",
+        "    helper = _orchestrator_find_callable(('missing',), includes=('runtime', 'preflight'))",
+        "    print(helper())",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" })).toThrow(
+      /missing 2 required positional arguments/
+    );
+
+    const repair = await repairPythonOrchestratorFindCallableClassSelectionSurface(scriptPath);
+
+    expect(repair.repaired).toBe(true);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repairedSource).toContain("_autolabos_orchestrator_find_callable_skip_classes_marker");
+    expect(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" })).toContain(
+      "build_runtime_preflight"
+    );
+  });
+
+  it("widens _coerce_int helpers whose default argument is required", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-coerce-int-required-default-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+
+    writeFileSync(
+      scriptPath,
+      [
+        "from typing import Any",
+        "",
+        "def _coerce_int(value: Any, default: int) -> int:",
+        "    try:",
+        "        return int(value)",
+        "    except Exception:",
+        "        return default",
+        "",
+        "def normalize(values):",
+        "    return [_coerce_int(value) for value in values]",
+        "",
+        "print(normalize(['1', 'bad']))",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" })).toThrow(
+      /missing 1 required positional argument: 'default'/
+    );
+
+    const repair = await repairPythonCoerceIntRequiredDefaultSurface(scriptPath);
+
+    expect(repair.repaired).toBe(true);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repairedSource).toContain("_autolabos_coerce_int_required_default_marker");
+    expect(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim()).toBe(
+      "[1, None]"
     );
   });
 

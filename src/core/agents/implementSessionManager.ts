@@ -7346,6 +7346,102 @@ export class ImplementSessionManager {
     }
 
 
+    const orchestratorFindCallableClassSelectionRepair =
+      await repairPythonIssueAcrossSurfaces(
+        pythonVerificationSurfacePaths,
+        repairPythonOrchestratorFindCallableClassSelectionSurface
+      );
+    if (orchestratorFindCallableClassSelectionRepair.repaired) {
+      onProgress?.(
+        orchestratorFindCallableClassSelectionRepair.message ||
+          "Repaired _orchestrator_find_callable so dataclass classes are not selected as executable helpers.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            orchestratorFindCallableClassSelectionRepair.message ||
+            "Repaired _orchestrator_find_callable so dataclass classes are not selected as executable helpers."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
+    const coerceIntRequiredDefaultRepair =
+      await repairPythonIssueAcrossSurfaces(
+        pythonVerificationSurfacePaths,
+        repairPythonCoerceIntRequiredDefaultSurface
+      );
+    if (coerceIntRequiredDefaultRepair.repaired) {
+      onProgress?.(
+        coerceIntRequiredDefaultRepair.message ||
+          "Repaired _coerce_int so callers may omit the default argument.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            coerceIntRequiredDefaultRepair.message ||
+            "Repaired _coerce_int so callers may omit the default argument."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
     const candidateCallablePartialBindRepair =
       await repairPythonIssueAcrossSurfaces(
         pythonVerificationSurfacePaths,
@@ -40775,6 +40871,104 @@ export async function repairPythonFindFirstCallableClassSelectionSurface(scriptP
   return {
     repaired: true,
     message: `Constrained _find_first_callable to executable functions in ${path.basename(scriptPath)} so run-plan dataclasses are not selected as orchestration helpers.`
+  };
+}
+
+export async function repairPythonOrchestratorFindCallableClassSelectionSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_orchestrator_find_callable_skip_classes_marker";
+  if (
+    source.includes(marker) ||
+    !source.includes("def _orchestrator_find_callable(") ||
+    !source.includes("globals().items()") ||
+    !source.includes("if callable(candidate):") ||
+    !source.includes("if not callable(candidate):")
+  ) {
+    return { repaired: false };
+  }
+
+  let nextSource = source.replace(
+    /^(\s*)if\s+callable\(candidate\):\n\1    return candidate$/mu,
+    (_match, indent: string) =>
+      [
+        `${indent}if callable(candidate):`,
+        `${indent}    # ${marker}`,
+        `${indent}    if isinstance(candidate, type):`,
+        `${indent}        continue`,
+        `${indent}    return candidate`
+      ].join("\n")
+  );
+
+  nextSource = nextSource.replace(
+    /^(\s*)if\s+not\s+callable\(candidate\):\n\1    continue$/mu,
+    (_match, indent: string) =>
+      [
+        `${indent}if not callable(candidate):`,
+        `${indent}    continue`,
+        `${indent}if isinstance(candidate, type):`,
+        `${indent}    continue`
+      ].join("\n")
+  );
+
+  if (nextSource === source || !nextSource.includes(marker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Constrained _orchestrator_find_callable to executable functions in ${path.basename(scriptPath)} so preflight dataclasses are not selected as helpers.`
+  };
+}
+
+export async function repairPythonCoerceIntRequiredDefaultSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_coerce_int_required_default_marker";
+  if (
+    source.includes(marker) ||
+    !/\b_coerce_int\([^,\n)]*\)/u.test(source) ||
+    !/def _coerce_int\(value: Any, default: (?:int|Any)\) -> (?:int|Any):/u.test(source)
+  ) {
+    return { repaired: false };
+  }
+
+  const nextSource = source.replace(
+    /def _coerce_int\(value: Any, default: (?:int|Any)\) -> (?:int|Any):/u,
+    `# ${marker}\ndef _coerce_int(value: Any, default: Any = None) -> Any:`
+  );
+  if (nextSource === source || !nextSource.includes(marker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Widened _coerce_int required-default compatibility in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
