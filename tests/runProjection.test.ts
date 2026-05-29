@@ -400,6 +400,34 @@ describe("runProjection", () => {
     expect(projection.detail).toContain("LLM rerank failed before a top-N shortlist was accepted");
   });
 
+  it("does not carry stale analyze rerank fallback details into later completed nodes", () => {
+    const run = makeRun({
+      status: "paused",
+      currentNode: "generate_hypotheses",
+      latestSummary: "Generated a tightened hypothesis shortlist."
+    });
+    run.graph.currentNode = "generate_hypotheses";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.note = "Selected papers for downstream hypothesis generation.";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.note = run.latestSummary;
+
+    const projection = projectRunForDisplay(run, {
+      analyze: {
+        selectedCount: 2,
+        totalCandidates: 20,
+        summaryCount: 2,
+        evidenceCount: 8,
+        rerankApplied: false,
+        rerankFallbackReason: "Model rerank was unavailable during an earlier paper-selection pass."
+      }
+    });
+
+    expect(projection.actionableNode).toBe("generate_hypotheses");
+    expect(projection.rerankFallback).toBe(false);
+    expect(projection.detail ?? "").not.toContain("LLM rerank failed before a top-N shortlist was accepted");
+  });
+
   it("suppresses stale collect-summary detail during a same-session handoff into running analyze_papers", () => {
     const run = makeRun({
       status: "running",

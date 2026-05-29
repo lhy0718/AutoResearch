@@ -202,17 +202,19 @@ export function projectRunForDisplay(run: RunRecord, hints?: RunProjectionHints)
   const retryCount = normalized.graph.retryCounters[actionableNode] ?? 0;
   const retryLimit = normalized.graph.retryPolicy.maxAttemptsPerNode;
   const blockedByUpstream = actionableNode !== normalized.currentNode;
+  const analyzeProjectionActive = actionableNode === "analyze_papers" || normalized.currentNode === "analyze_papers";
   const pausedRetry = (normalized.status === "paused" || normalized.status === "failed") && retryCount > 0;
   const staleLatestSummary = isLatestSummaryStale(normalized, effectiveHints);
   const suppressStaleLatestSummaryDetail = shouldSuppressStaleLatestSummaryDetail(normalized, effectiveHints);
   const usageLimitDetail = resolveUsageLimitDetail([
-    effectiveHints?.analyze?.selectedPaperLastError,
-    effectiveHints?.analyze?.rerankFallbackReason,
+    analyzeProjectionActive ? effectiveHints?.analyze?.selectedPaperLastError : undefined,
+    analyzeProjectionActive ? effectiveHints?.analyze?.rerankFallbackReason : undefined,
     actionableState?.lastError,
     normalized.graph.nodeStates[normalized.currentNode]?.lastError
   ]);
   const usageLimitBlocked = Boolean(usageLimitDetail);
   const rerankFallback =
+    analyzeProjectionActive &&
     effectiveHints?.analyze?.rerankApplied === false && Boolean(effectiveHints?.analyze?.rerankFallbackReason);
   const noArtifactProgress =
     actionableNode === "analyze_papers" &&
