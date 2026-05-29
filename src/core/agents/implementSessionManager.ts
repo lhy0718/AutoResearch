@@ -7294,6 +7294,52 @@ export class ImplementSessionManager {
     }
 
 
+    const findFirstCallableClassSelectionRepair =
+      await repairPythonFindFirstCallableClassSelectionSurface(executionScriptPath);
+    if (findFirstCallableClassSelectionRepair.repaired) {
+      onProgress?.(
+        findFirstCallableClassSelectionRepair.message ||
+          "Repaired _find_first_callable so dataclass classes are not selected as executable helpers.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            findFirstCallableClassSelectionRepair.message ||
+            "Repaired _find_first_callable so dataclass classes are not selected as executable helpers."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
+
     const outputDirArgparseRepair = await repairPythonOutputDirArgparseAlias(
       executionScriptPath,
       attempt.runCommand
@@ -40579,6 +40625,80 @@ export async function repairPythonCallableResolverClassSelectionSurface(scriptPa
   return {
     repaired: true,
     message: `Constrained _resolve_callable_by_names to executable functions in ${path.basename(scriptPath)} so condition dataclasses are not selected as runners.`
+  };
+}
+
+export async function repairPythonFindFirstCallableClassSelectionSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_find_first_callable_skip_classes_marker";
+  if (
+    source.includes(marker) ||
+    !source.includes("def _find_first_callable(") ||
+    !source.includes("keyword_groups") ||
+    !source.includes("globals().items()") ||
+    !source.includes("if not callable(candidate):")
+  ) {
+    return { repaired: false };
+  }
+
+  let nextSource = source.replace(
+    /^(\s*)if\s+callable\(candidate\):\n\1    return cast\(Callable\[\.\.\., Any\], candidate\)$/mu,
+    (_match, indent: string) =>
+      [
+        `${indent}if callable(candidate):`,
+        `${indent}    # ${marker}`,
+        `${indent}    if isinstance(candidate, type):`,
+        `${indent}        continue`,
+        `${indent}    return cast(Callable[..., Any], candidate)`
+      ].join("\n")
+  );
+
+  if (nextSource === source) {
+    nextSource = source.replace(
+      /^(\s*)if\s+callable\(candidate\):\n\1    return candidate$/mu,
+      (_match, indent: string) =>
+        [
+          `${indent}if callable(candidate):`,
+          `${indent}    # ${marker}`,
+          `${indent}    if isinstance(candidate, type):`,
+          `${indent}        continue`,
+          `${indent}    return candidate`
+        ].join("\n")
+    );
+  }
+
+  nextSource = nextSource.replace(
+    /^(\s*)if\s+not\s+callable\(candidate\):\n\1    continue$/mu,
+    (_match, indent: string) =>
+      [
+        `${indent}if not callable(candidate):`,
+        `${indent}    continue`,
+        `${indent}if isinstance(candidate, type):`,
+        `${indent}    continue`
+      ].join("\n")
+  );
+
+  if (nextSource === source || !nextSource.includes(marker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Constrained _find_first_callable to executable functions in ${path.basename(scriptPath)} so run-plan dataclasses are not selected as orchestration helpers.`
   };
 }
 

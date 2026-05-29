@@ -214,6 +214,7 @@ import {
   repairPythonRankDropoutMarkerParserCollisionSurface,
   repairPythonImportedHelperRunnerResolverSurface,
   repairPythonCallableResolverClassSelectionSurface,
+  repairPythonFindFirstCallableClassSelectionSurface,
   applyImplementationContractLocalizationGuard,
   applyRunnerFeedbackLocalizationGuard,
   repairPythonStudyInvokeContractKwargSurface,
@@ -16329,6 +16330,67 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("_autolabos_callable_resolver_skip_classes_marker");
     expect(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" })).toContain(
       "baseline_condition"
+    );
+  });
+
+  it("repairs _find_first_callable fallbacks that select run-plan dataclass classes", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-find-first-callable-class-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "from dataclasses import dataclass",
+        "from typing import Any, Callable, Optional, Sequence, cast",
+        "",
+        "@dataclass(frozen=True)",
+        "class ConditionSeedRunPlan:",
+        "    global_run_index: int",
+        "    condition_index: int",
+        "    seed_index: int",
+        "",
+        "def run_all_conditions(args=None):",
+        "    return {'status': 'ok', 'runner': 'run_all_conditions'}",
+        "",
+        "def _find_first_callable(candidate_names: Sequence[str], keyword_groups: Sequence[Sequence[str]] = ()) -> Optional[Callable[..., Any]]:",
+        "    for name in candidate_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return cast(Callable[..., Any], candidate)",
+        "    for name, candidate in globals().items():",
+        "        if not callable(candidate):",
+        "            continue",
+        "        if name.startswith('_'):",
+        "            continue",
+        "        lowered = name.lower()",
+        "        if any(all(token in lowered for token in group) for group in keyword_groups):",
+        "            return cast(Callable[..., Any], candidate)",
+        "    return None",
+        "",
+        "def main():",
+        "    helper = _find_first_callable(['missing_runner'], keyword_groups=(('run', 'condition'),))",
+        "    print(helper())",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" })).toThrow(
+      /missing 3 required positional arguments/
+    );
+
+    const repair = await repairPythonFindFirstCallableClassSelectionSurface(scriptPath);
+
+    expect(repair.repaired).toBe(true);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repairedSource).toContain("_autolabos_find_first_callable_skip_classes_marker");
+    expect(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" })).toContain(
+      "run_all_conditions"
     );
   });
 
