@@ -40051,6 +40051,140 @@ export async function repairPythonFlexibleInvocationPlannedRunAliasSurface(scrip
   };
 }
 
+
+export async function repairPythonPlanEntryConditionSeedExecutorBridgeSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_plan_entry_condition_seed_executor_bridge_marker";
+  if (
+    source.includes(marker) ||
+    !source.includes("def _invoke_plan_executor(") ||
+    !source.includes("No condition/seed execution helper was found in the current runner module.") ||
+    !source.includes("def resolve_baseline_context_for_condition_seed(") ||
+    !source.includes("def execute_ordered_condition_seed_pair(") ||
+    !source.includes('"execute_planned_condition_seed"')
+  ) {
+    return { repaired: false };
+  }
+
+  const insertionMatch = source.match(/\ndef\s+_invoke_plan_executor\s*\(/u);
+  if (!insertionMatch || insertionMatch.index === undefined) {
+    return { repaired: false };
+  }
+
+  const bridge = [
+    "",
+    `# ${marker}`,
+    "def _autolabos_plan_entry_bridge_get(source, key, default=None):",
+    "    if source is None:",
+    "        return default",
+    "    if isinstance(source, Mapping):",
+    "        return source.get(key, default)",
+    "    return getattr(source, key, default)",
+    "",
+    "def execute_planned_condition_seed(plan_entry=None, context=None, entry=None, planned_run=None, run_spec=None, **kwargs):",
+    "    active_entry = plan_entry if plan_entry is not None else entry if entry is not None else planned_run if planned_run is not None else run_spec",
+    "    if active_entry is None:",
+    "        active_entry = kwargs.get('cell') or kwargs.get('job') or kwargs.get('run_record')",
+    "    if active_entry is None:",
+    "        raise RuntimeError('planned condition/seed execution requires a plan entry.')",
+    "    active_context = context if context is not None else kwargs.get('execution_context') or kwargs.get('study_context') or kwargs.get('run_context') or {}",
+    "    marker_value = (",
+    "        _autolabos_plan_entry_bridge_get(active_entry, 'condition_marker')",
+    "        or _autolabos_plan_entry_bridge_get(active_entry, 'marker')",
+    "        or _autolabos_plan_entry_bridge_get(active_entry, 'condition')",
+    "        or _autolabos_plan_entry_bridge_get(active_entry, 'condition_id')",
+    "    )",
+    "    if marker_value is None:",
+    "        raise RuntimeError('planned condition/seed execution requires a condition marker.')",
+    "    seed_value = _autolabos_plan_entry_bridge_get(active_entry, 'seed', _autolabos_plan_entry_bridge_get(active_entry, 'random_seed', 0))",
+    "    base_model_name = (",
+    "        _autolabos_plan_entry_bridge_get(active_entry, 'selected_model_id')",
+    "        or _autolabos_plan_entry_bridge_get(active_entry, 'selected_model')",
+    "        or _autolabos_plan_entry_bridge_get(active_entry, 'base_model_name')",
+    "        or _autolabos_plan_entry_bridge_get(active_context, 'selected_model')",
+    "        or _autolabos_plan_entry_bridge_get(active_context, 'selected_model_name')",
+    "        or _autolabos_plan_entry_bridge_get(active_context, 'model_name')",
+    "        or globals().get('PREFERRED_BASE_MODEL')",
+    "        or globals().get('PREFERRED_BASE_MODEL_ID')",
+    "        or 'local_base_model'",
+    "    )",
+    "    backend_name = (",
+    "        _autolabos_plan_entry_bridge_get(active_entry, 'backend_name')",
+    "        or _autolabos_plan_entry_bridge_get(active_context, 'backend_name')",
+    "        or _autolabos_plan_entry_bridge_get(active_context, 'execution_backend')",
+    "        or 'local'",
+    "    )",
+    "    output_root = (",
+    "        _autolabos_plan_entry_bridge_get(active_context, 'output_root')",
+    "        or _autolabos_plan_entry_bridge_get(active_context, 'public_experiment_dir')",
+    "        or _autolabos_plan_entry_bridge_get(active_context, 'public_dir')",
+    "        or _autolabos_plan_entry_bridge_get(active_context, 'output_dir')",
+    "        or _autolabos_plan_entry_bridge_get(active_entry, 'artifact_output_dir')",
+    "        or _autolabos_plan_entry_bridge_get(active_entry, 'training_output_dir')",
+    "        or '.'",
+    "    )",
+    "    path_type = globals().get('Path')",
+    "    if path_type is None:",
+    "        path_type = __import__('pathlib').Path",
+    "    resolver = globals().get('resolve_baseline_context_for_condition_seed') or globals().get('resolve_baseline_context')",
+    "    pair_executor = (",
+    "        globals().get('execute_ordered_condition_seed_pair')",
+    "        or globals().get('run_ordered_condition_seed_pair')",
+    "        or globals().get('execute_condition_seed_pair_ordered')",
+    "    )",
+    "    if not callable(resolver) or not callable(pair_executor):",
+    "        raise RuntimeError('No compatible ordered condition/seed pair executor was available.')",
+    "    baseline_cache = None",
+    "    if isinstance(active_context, dict):",
+    "        baseline_cache = active_context.setdefault('_autolabos_baseline_result_cache', {})",
+    "    resolved_context = resolver(",
+    "        condition_marker=str(marker_value),",
+    "        seed=int(seed_value),",
+    "        base_model_name=str(base_model_name),",
+    "        backend_name=str(backend_name),",
+    "        output_root=path_type(output_root),",
+    "        baseline_result_cache=baseline_cache,",
+    "        completed_pair_results=_autolabos_plan_entry_bridge_get(active_context, 'completed_pair_results', None),",
+    "        allow_baseline_reuse=True,",
+    "        extra_metadata=dict(active_entry) if isinstance(active_entry, Mapping) else {},",
+    "    )",
+    "    return pair_executor(",
+    "        resolved_context,",
+    "        execution_context=active_context,",
+    "        baseline_cache=baseline_cache,",
+    "        timeout_sec=_autolabos_plan_entry_bridge_get(active_context, 'timeout_sec', _autolabos_plan_entry_bridge_get(active_context, 'budget_timeout_sec', None)),",
+    "    )",
+    "",
+    "run_planned_condition_seed = execute_planned_condition_seed",
+    "execute_condition_seed_comparison = execute_planned_condition_seed",
+    "run_condition_seed_comparison = execute_planned_condition_seed",
+    ""
+  ].join("\n");
+
+  const nextSource = `${source.slice(0, insertionMatch.index)}${bridge}${source.slice(insertionMatch.index)}`;
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Bridged plan-entry condition/seed execution in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
 export async function repairPythonSingleRunExecutionBridgeSurface(scriptPath?: string): Promise<{
   repaired: boolean;
   message?: string;

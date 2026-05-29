@@ -201,6 +201,7 @@ import {
   repairPythonFailureEvidenceNonRecursiveSurface,
   repairPythonSupportedKwargsSemanticAliasSurface,
   repairPythonFlexibleInvocationPlannedRunAliasSurface,
+  repairPythonPlanEntryConditionSeedExecutorBridgeSurface,
   repairPythonSingleRunExecutionBridgeSurface,
   repairPythonSingleCellResolverAvoidSelfSurface,
   repairPythonObservedAverageAccuracyAliasSurface,
@@ -19646,6 +19647,105 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("raw_seeds.replace(\";\", \",\")");
     const output = JSON.parse(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }));
     expect(output.seed_rows.map((row: { seed: number }) => row.seed)).toEqual([42, 43, 44]);
+  });
+
+  it("bridges plan-entry condition/seed executor resolution before handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-plan-entry-condition-seed-bridge-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "import json",
+        "from pathlib import Path",
+        "from typing import Any, Dict, List, Mapping, Optional",
+        "",
+        "def resolve_baseline_context_for_condition_seed(condition_marker, seed, base_model_name, backend_name, output_root, baseline_result_cache=None, completed_pair_results=None, allow_baseline_reuse=True, extra_metadata=None):",
+        "    return {",
+        "        'condition_marker': condition_marker,",
+        "        'seed': seed,",
+        "        'base_model_name': base_model_name,",
+        "        'backend_name': backend_name,",
+        "        'output_root': str(output_root),",
+        "        'extra_metadata': dict(extra_metadata or {}),",
+        "    }",
+        "",
+        "def execute_ordered_condition_seed_pair(resolved_pair_context, execution_context=None, baseline_cache=None, timeout_sec=None):",
+        "    return {",
+        "        'status': 'completed',",
+        "        'success': True,",
+        "        'condition_marker': resolved_pair_context['condition_marker'],",
+        "        'seed': resolved_pair_context['seed'],",
+        "        'base_model_name': resolved_pair_context['base_model_name'],",
+        "        'backend_name': resolved_pair_context['backend_name'],",
+        "        'timeout_sec': timeout_sec,",
+        "        'cache_enabled': isinstance(baseline_cache, dict),",
+        "    }",
+        "",
+        "def _executor_candidates() -> List[str]:",
+        "    return [",
+        "        \"execute_planned_condition_seed\",",
+        "    ]",
+        "",
+        "def _invoke_plan_executor(plan_entry: Mapping[str, Any], context: Mapping[str, Any]) -> Any:",
+        "    inspect = __import__(\"inspect\")",
+        "    last_error: Optional[BaseException] = None",
+        "    for helper_name in _executor_candidates():",
+        "        helper = globals().get(helper_name)",
+        "        if not callable(helper):",
+        "            continue",
+        "        try:",
+        "            signature = inspect.signature(helper)",
+        "            kwargs: Dict[str, Any] = {}",
+        "            for parameter_name in signature.parameters:",
+        "                if parameter_name in {\"plan_entry\", \"entry\", \"run_spec\", \"planned_run\", \"job\", \"cell\"}:",
+        "                    kwargs[parameter_name] = plan_entry",
+        "                elif parameter_name in {\"context\", \"execution_context\", \"study_context\", \"run_context\", \"state\"}:",
+        "                    kwargs[parameter_name] = context",
+        "            if kwargs:",
+        "                return helper(**kwargs)",
+        "        except TypeError as exc:",
+        "            last_error = exc",
+        "        except Exception as exc:",
+        "            last_error = exc",
+        "            raise",
+        "    if last_error is not None:",
+        "        raise RuntimeError(f\"No compatible execution helper could be invoked for plan entry {plan_entry!r}\") from last_error",
+        "    raise RuntimeError(\"No condition/seed execution helper was found in the current runner module.\")",
+        "",
+        "if __name__ == '__main__':",
+        "    result = _invoke_plan_executor(",
+        "        {'condition_marker': 'candidate_condition_a', 'seed': 7, 'selected_model_id': 'model_alpha'},",
+        "        {'output_dir': 'out', 'backend_name': 'local_backend', 'timeout_sec': 11},",
+        "    )",
+        "    print(json.dumps(result, sort_keys=True))",
+        "",
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No condition\/seed execution helper/u
+    );
+
+    const repair = await repairPythonPlanEntryConditionSeedExecutorBridgeSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_plan_entry_condition_seed_executor_bridge_marker");
+    const output = JSON.parse(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }));
+    expect(output).toMatchObject({
+      status: "completed",
+      success: true,
+      condition_marker: "candidate_condition_a",
+      seed: 7,
+      base_model_name: "model_alpha",
+      backend_name: "local_backend",
+      timeout_sec: 11,
+      cache_enabled: true
+    });
   });
 
   it("adds generated single-run executors to workflow fallback resolution", async () => {

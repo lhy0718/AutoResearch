@@ -80,6 +80,7 @@ import {
   repairPythonSingleCellExecutorRuntimeKwargsSurface,
   repairPythonFailureEvidenceNonRecursiveSurface,
   repairPythonSupportedKwargsSemanticAliasSurface,
+  repairPythonPlanEntryConditionSeedExecutorBridgeSurface,
   repairPythonSingleRunExecutionBridgeSurface,
   repairPythonSingleCellResolverAvoidSelfSurface,
   repairPythonObservedAverageAccuracyAliasSurface,
@@ -3212,6 +3213,17 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
   if (singleConditionExecutorBridgeRepair.repaired) {
     repaired = true;
     messages.push(singleConditionExecutorBridgeRepair.message || `Bridged generated single-condition executor resolution in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+  const planEntryConditionSeedExecutorBridgeRepair =
+    await repairPythonPlanEntryConditionSeedExecutorBridgeSurface(scriptPath);
+  if (planEntryConditionSeedExecutorBridgeRepair.repaired) {
+    repaired = true;
+    messages.push(
+      planEntryConditionSeedExecutorBridgeRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Bridged plan-entry condition/seed execution in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
   }
   const workflowSingleRunExecutorCandidateRepair =
     await repairPythonWorkflowSingleRunExecutorCandidateSurface(scriptPath);
