@@ -215,6 +215,7 @@ import {
   repairPythonRankDropoutMarkerParserCollisionSurface,
   repairPythonImportedHelperRunnerResolverSurface,
   repairPythonCallableResolverClassSelectionSurface,
+  repairPythonLookupCallableClassSelectionSurface,
   repairPythonFindFirstCallableClassSelectionSurface,
   repairPythonOrchestratorFindCallableClassSelectionSurface,
   repairPythonCandidateCallablePartialBindSurface,
@@ -16393,6 +16394,81 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("_autolabos_orchestrator_find_callable_skip_classes_marker");
     expect(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" })).toContain(
       "build_runtime_preflight"
+    );
+  });
+
+  it("repairs lookup callable helpers that select study dataclass classes", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-lookup-callable-class-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import dataclass",
+        "from typing import Any, Optional, Sequence",
+        "",
+        "@dataclass(frozen=True)",
+        "class StudySpec:",
+        "    name: str = 'default'",
+        "",
+        "def run_study_loop(options=None):",
+        "    return {'status': 'completed', 'runner': 'run_study_loop'}",
+        "",
+        "def _lookup_callable_by_name(*names: str) -> Optional[Any]:",
+        "    for name in names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def _lookup_callable_by_tokens(required_tokens: Sequence[str], excluded_tokens: Sequence[str] = (), excluded_names: Sequence[str] = ()) -> Optional[Any]:",
+        "    candidates = []",
+        "    excluded_name_set = {str(name) for name in excluded_names}",
+        "    for name, candidate in globals().items():",
+        "        if name in excluded_name_set or not callable(candidate):",
+        "            continue",
+        "        lowered = name.lower()",
+        "        if any(token not in lowered for token in required_tokens):",
+        "            continue",
+        "        if any(token in lowered for token in excluded_tokens):",
+        "            continue",
+        "        priority = 0",
+        "        if not name.startswith('_'):",
+        "            priority -= 2",
+        "        priority += lowered.count('_')",
+        "        priority += len(lowered)",
+        "        candidates.append((priority, name, candidate))",
+        "    if not candidates:",
+        "        return None",
+        "    candidates.sort(key=lambda item: (item[0], item[1]))",
+        "    return candidates[0][2]",
+        "",
+        "def main():",
+        "    runner = _lookup_callable_by_name('missing')",
+        "    if runner is None:",
+        "        runner = _lookup_callable_by_tokens(required_tokens=('study',), excluded_tokens=('summary',), excluded_names=('main',))",
+        "    result = runner()",
+        "    print(type(result).__name__ if not isinstance(result, dict) else result['runner'])",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim()).toBe(
+      "StudySpec"
+    );
+
+    const repair = await repairPythonLookupCallableClassSelectionSurface(scriptPath);
+
+    expect(repair.repaired).toBe(true);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repairedSource).toContain("_autolabos_lookup_callable_skip_classes_marker");
+    expect(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim()).toBe(
+      "run_study_loop"
     );
   });
 
