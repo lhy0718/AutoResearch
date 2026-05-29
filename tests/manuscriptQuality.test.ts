@@ -637,7 +637,7 @@ describe("manuscriptQuality style lint", () => {
             repairable: true,
             message: "The Related Work section identifies high-level axes but does not position the study against prior work.",
             fix_recommendation:
-              "Compare prior work and this study along concrete axes such as model scale, PEFT setup, condition-parameter variation, and evaluation scope.",
+              "Compare prior work and this study along concrete axes such as model scale, method setup, condition-parameter variation, and evaluation scope.",
             supporting_spans: []
           }
         ]

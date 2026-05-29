@@ -3053,7 +3053,7 @@ describe("TerminalApp pending natural plan execution", () => {
         .mockResolvedValueOnce("2x RTX 4090 only; public datasets only; seed=42.")
         .mockResolvedValueOnce("Which lightweight recipe choice improves benchmark accuracy most reliably?")
         .mockResolvedValueOnce("Public benchmarks exist; four-condition comparison is feasible; a named baseline is available.")
-        .mockResolvedValueOnce("Baseline name: tuned LoRA baseline; Why relevant: standard compact-model comparator; Comparison dimension: accuracy and runtime.")
+        .mockResolvedValueOnce("Baseline name: tuned adapter baseline; Why relevant: standard compact-model comparator; Comparison dimension: accuracy and runtime.")
         .mockResolvedValueOnce("Datasets: public instruction subset; Task type: instruction tuning and zero-shot evaluation; Validation discipline: fixed seed and prompts.")
         .mockResolvedValueOnce("Proposed method: strongest alternative recipe; Comparator: tuned baseline; Dimension: benchmark accuracy delta.")
         .mockResolvedValueOnce("At least +1.0 point over baseline; all planned conditions execute; bootstrap CI required.")
@@ -3229,7 +3229,7 @@ describe("TerminalApp pending natural plan execution", () => {
               "2x RTX 4090 maximum; public data only; seed=42.",
               "Which lightweight recipe choice improves benchmark accuracy most reliably?",
               "A four-condition comparison is feasible with a compact model and public evaluation tasks.",
-              "Baseline name: tuned LoRA baseline; Why relevant: standard comparator; Comparison dimension: accuracy and runtime.",
+              "Baseline name: tuned adapter baseline; Why relevant: standard comparator; Comparison dimension: accuracy and runtime.",
               "Dataset: bounded instruction subset; Task: instruction tuning and zero-shot evaluation; Validation discipline: fixed prompts and seed.",
               "Proposed method: strongest lightweight alternative; Comparator: tuned baseline; Dimension: benchmark accuracy delta.",
               "Executed experiments, baseline comparison, result table, and explicit claim-to-evidence mapping.",

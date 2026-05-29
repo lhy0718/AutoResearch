@@ -325,7 +325,7 @@ describe("paperWriting related-work support", () => {
   it("replaces related-work paragraphs that leak bibliography text or metric bullet lists", () => {
     const bundle = makeBundle();
     bundle.relatedWorkScout = {
-      query: "LoRA instruction tuning",
+      query: "adapter instruction tuning",
       rationale: "Exercise bibliography spillover filtering.",
       papers: [
         {
@@ -357,7 +357,7 @@ describe("paperWriting related-work support", () => {
                 citation_paper_ids: ["paper_1"]
               },
               {
-                text: "The closest prior work includes Chain-of-LoRA. The present paper positions itself around - Primary metric: average accuracy across Benchmark Task A and Benchmark Task B. - Secondary metrics: per-task accuracy and runtime. while keeping claims limited to the available artifacts.",
+                text: "The closest prior work includes Chain-of-Adapters. The present paper positions itself around - Primary metric: average accuracy across Benchmark Task A and Benchmark Task B. - Secondary metrics: per-task accuracy and runtime. while keeping claims limited to the available artifacts.",
                 evidence_ids: ["ev_1"],
                 citation_paper_ids: ["paper_2"]
               }

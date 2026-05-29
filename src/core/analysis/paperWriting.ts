@@ -2833,7 +2833,7 @@ export function sanitizePaperNarrativeText(value: unknown): string {
     .replace(/\brepeated condition cells\b/giu, "the completed condition-parameter cells")
     .replace(/\brecorded seed coverage\b/giu, "future multi-seed replication")
     .replace(
-      /\bThe fixed search space includes\s*(?:LoRA|adapter) target modules were [^.]+\.,\s*Fixed training settings included [^.]+\.,\s*and The inspected seed-level record reports [^.]+ for the inspected seed-level record\./giu,
+      /\bThe fixed search space includes\s*(?:adapter-method|adapter) target modules were [^.]+\.,\s*Fixed training settings included [^.]+\.,\s*and The inspected seed-level record reports [^.]+ for the inspected seed-level record\./giu,
       "The fixed adapter target modules, training settings, and inspected seed-level counts are summarized from the run artifacts rather than hardcoded manuscript defaults."
     )
     .replace(
@@ -2841,7 +2841,7 @@ export function sanitizePaperNarrativeText(value: unknown): string {
       "The fixed search space held the manipulated condition parameters while keeping run-recorded training settings and sample-count details fixed for the reported pilot."
     )
     .replace(
-      /\bThe reader-visible summary identifies [^.]+,\s*but it does not disclose the instantiated checkpoint,\s*optimizer,\s*batch size,\s*learning rate,\s*epoch count,\s*or LoRA target modules;\s*the comparison is therefore bounded to the executed pilot record rather than a fully specified benchmark reproduction\./giu,
+      /\bThe reader-visible summary identifies [^.]+,\s*but it does not disclose the instantiated checkpoint,\s*optimizer,\s*batch size,\s*learning rate,\s*epoch count,\s*or adapter target modules;\s*the comparison is therefore bounded to the executed pilot record rather than a fully specified benchmark reproduction\./giu,
       "Auxiliary protocol details are reported only when visible in the run artifacts, and omitted quantities are treated as limitations rather than inferred measurements."
     )
     .replace(/\s+([,.;:])/gu, "$1")
@@ -2951,7 +2951,7 @@ function rewriteReaderFacingProvenancePhrases(value: string): string {
     .replace(/\bIn the executable run metadata and released study summary,\s*([^.,]+?)\s+is identified as the trained backbone/giu, "The reported study uses $1 as the trained backbone")
     .replace(/\bThe executable run metadata identifies\s+([^.,]+?)\s+as the trained backbone/giu, "The reported study uses $1 as the trained backbone")
     .replace(/\bThe emphasis on benchmark accuracy rather than judge-based preference scoring is also compatible with prior warnings that chatbot evaluation can be noisy and order sensitive\./giu, "The emphasis on benchmark accuracy rather than judge-based preference scoring avoids introducing a separate evaluator-noise variable into this small benchmark.")
-    .replace(/\bThis narrowing follows the same resource-conscious logic emphasized in prior PEFT work, where fixed memory and runtime budgets make selective comparison preferable to shallow coverage of every configuration\./giu, "This narrowing treats fixed memory and runtime budgets as the governing design constraint, making selective comparison preferable to shallow coverage of every configuration.")
+    .replace(/\bThis narrowing follows the same resource-conscious logic emphasized in prior method-family work, where fixed memory and runtime budgets make selective comparison preferable to shallow coverage of every configuration\./giu, "This narrowing treats fixed memory and runtime budgets as the governing design constraint, making selective comparison preferable to shallow coverage of every configuration.")
     .replace(/\bBecause several of these latter sources are available only through partial extraction in the present evidence base, they are used here for framing rather than detailed quantitative comparison\./giu, "Because those strands are not direct condition-matched baselines, they are used here for framing rather than detailed quantitative comparison.")
     .replace(/\bThe benchmark also contributes methodologically\./giu, "The benchmark also illustrates a scoped reporting protocol for this setting.")
     .replace(/\bTo isolate condition parameters as much as the budget allowed,\s*the protocol held the optimizer,\s*learning-rate schedule,\s*adapter target modules,\s*effective batch size,\s*token budget,\s*and capped training set constant across cells\./giu, "To isolate condition parameters as much as the budget allowed, the protocol fixed the optimizer, learning-rate schedule, adapter target modules, effective batch size, and capped data budget; the preserved artifacts do not independently verify identical consumed token counts for every cell.")
@@ -2997,8 +2997,8 @@ function rewriteReaderFacingProvenancePhrases(value: string): string {
     .replace(/\brepeated-seed condition-parameter screen\b/giu, "condition-grid pilot")
     .replace(/\blocal repeated-seed preflight\b/giu, "local condition-grid preflight")
     .replace(/\brepeated-seed preflight\b/giu, "condition-grid preflight")
-    .replace(/\bThat reading is consistent with prior PEFT work such as Qadapter and neighboring low-budget adaptation studies\b/giu, "That reading is consistent with prior PEFT and neighboring low-budget adaptation studies")
-    .replace(/\bQadapter-scale efficiency work and broader benchmark papers such as MAPLE both suggest\b/giu, "Efficiency-oriented PEFT work and broader benchmark papers both suggest")
+    .replace(/\bThat reading is consistent with prior method-family work such as quantized adapter and neighboring low-budget adaptation studies\b/giu, "That reading is consistent with prior method-family and neighboring low-budget adaptation studies")
+    .replace(/\bquantized adapter-scale efficiency work and broader benchmark papers such as benchmark-suite studies both suggest\b/giu, "Efficiency-oriented method-family work and broader benchmark papers both suggest")
     .replace(/\bthe released comparison table and statistical summary\b/giu, "the condition-level comparison")
     .replace(/\bthe released study summary\b/giu, "the study summary")
     .replace(/\bIn the released summary,\s*/giu, "In the reported results, ")

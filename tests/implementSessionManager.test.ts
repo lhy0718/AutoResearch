@@ -617,7 +617,7 @@ describe("ImplementSessionManager", () => {
   });
 
   it("repairs the generated runner's locked-condition count for baseline-first studies", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-peft-runner-"));
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-adapter-runner-"));
     tempDirs.push(workspace);
     const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
@@ -643,7 +643,7 @@ describe("ImplementSessionManager", () => {
   });
 
   it("repairs generated condition-helper invocation kwargs for baseline-first adapter runners", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-peft-helper-"));
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-adapter-helper-"));
     tempDirs.push(workspace);
     const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
@@ -11810,7 +11810,7 @@ describe("ImplementSessionManager", () => {
               metrics_path: path.join(runDir, "metrics.json"),
               experiment_mode: "real_execution",
               decomposition_plan: {
-                objective: "Materialize the smallest runnable PEFT bundle.",
+                objective: "Materialize the smallest runnable adapter bundle.",
                 strategy: "purpose_adaptive",
                 rationale: "This experiment needs one runner script and one config file.",
                 units: [
@@ -11818,7 +11818,7 @@ describe("ImplementSessionManager", () => {
                     id: "runner",
                     unit_type: "text_file",
                     title: "Runner script",
-                    purpose: "Execute the bounded PEFT experiment.",
+                    purpose: "Execute the bounded adapter experiment.",
                     generation_mode: "materialize_text_file",
                     target_path: publicScriptPath,
                     verification_focus: ["run_command"]
@@ -12796,7 +12796,7 @@ describe("ImplementSessionManager", () => {
             text: JSON.stringify({
               version: 1,
               strategy: "hf_bootstrap_contract",
-              summary: "The planned PEFT baseline requires a Hugging Face model and tokenizer bootstrap.",
+              summary: "The planned adapter baseline requires a Hugging Face model and tokenizer bootstrap.",
               requires_network: true,
               requires_warm_cache: true,
               blocking_reason:
@@ -21889,7 +21889,7 @@ describe("ImplementSessionManager", () => {
       scriptPath,
       [
         "def main() -> int:",
-        "    print_status('PEFT instruction-tuning study starting')",
+        "    print_status('adapter instruction-tuning study starting')",
         "    return 0",
         "",
         "if __name__ == '__main__':",
@@ -21907,7 +21907,7 @@ describe("ImplementSessionManager", () => {
     expect(repair.repaired).toBe(true);
     expect(repairedSource).toContain("def print_status(message, *, level=\"INFO\"):");
     expect(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" })).toContain(
-      "[AutoLabOS] PEFT instruction-tuning study starting"
+      "[AutoLabOS] adapter instruction-tuning study starting"
     );
   });
 
@@ -23338,8 +23338,8 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
-  it("repairs PEFT virtual-token continuation scoring logits alignment before handoff", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-peft-virtual-token-eval-"));
+  it("repairs adapter virtual-token continuation scoring logits alignment before handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-adapter-virtual-token-eval-"));
     tempDirs.push(workspace);
     const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
@@ -23371,7 +23371,7 @@ describe("ImplementSessionManager", () => {
     const repairedSource = readFileSync(scriptPath, "utf8");
 
     expect(repair.repaired).toBe(true);
-    expect(repairedSource).toContain("Align PEFT virtual prompt-token logits");
+    expect(repairedSource).toContain("Align adapter virtual prompt-token logits");
     expect(repairedSource).toContain("raw_logits = raw_logits[:, -input_ids.shape[1]:, :]");
     expect(repairedSource).toContain("aligned_steps = min(int(logits.shape[1]), int(shifted_labels.shape[1]))");
     execFileSync("python3", ["-m", "py_compile", scriptPath], { cwd: workspace });
@@ -23861,7 +23861,7 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
-  it("repairs final workflow dispatcher aliases when the generated runner defines a baseline-locked PEFT comparison", async () => {
+  it("repairs final workflow dispatcher aliases when the generated runner defines a baseline-locked adapter comparison", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-final-workflow-alias-"));
     tempDirs.push(workspace);
     const scriptPath = path.join(workspace, "run_instruction_study.py");
@@ -26626,8 +26626,8 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
-  it("adds PEFT acronym class aliases when staged chunks disagree on config casing", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-peft-acronym-alias-"));
+  it("adds adapter acronym class aliases when staged chunks disagree on config casing", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-adapter-acronym-alias-"));
     tempDirs.push(workspace);
     const scriptPath = path.join(workspace, "run_instruction_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
@@ -35354,7 +35354,7 @@ describe("ImplementSessionManager", () => {
   });
 
   it("repairs a missing RecipeSpec peft_type alias before handing a python runner off to run_experiments", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-recipe-peft-type-repair-"));
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-recipe-adapter-type-repair-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
@@ -35379,7 +35379,7 @@ describe("ImplementSessionManager", () => {
 
     const codex = {
       runTurnStream: async () => ({
-        threadId: "thread-recipe-peft-type-repair",
+        threadId: "thread-recipe-adapter-type-repair",
         finalText: JSON.stringify({
           summary: "Implemented the experiment runner.",
           run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`,
@@ -36769,7 +36769,7 @@ describe("ImplementSessionManager", () => {
   });
 
   it("rejects python runners whose baseline-first adapter entrypoint resolver misses the generated study helper", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-missing-baseline-first-peft-helper-"));
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-missing-baseline-first-adapter-helper-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
@@ -36777,7 +36777,7 @@ describe("ImplementSessionManager", () => {
 
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
-      title: "Reject Missing Baseline First PEFT Helper",
+      title: "Reject Missing Baseline First Adapter Helper",
       topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
@@ -36797,7 +36797,7 @@ describe("ImplementSessionManager", () => {
       runTurnStream: async () => {
         calls += 1;
         return {
-          threadId: "thread-missing-baseline-first-peft-helper",
+          threadId: "thread-missing-baseline-first-adapter-helper",
           finalText: JSON.stringify({
             summary: "Implemented a runner whose entrypoint resolver misses the generated adapter study helper.",
             run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`,

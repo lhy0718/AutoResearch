@@ -426,7 +426,7 @@ function shouldShowReaderVisibleCitations(section: string, paragraph: string, pa
   if (key === "method") {
     return false;
   }
-  if (/\b(?:QLoRA|MAPLE|PEFT|prior work|literature|cited work|adapter-variant|benchmarking papers)\b/iu.test(paragraph)) {
+  if (/\b(?:prior work|literature|cited work|method-family|adapter-variant|benchmarking papers)\b/iu.test(paragraph)) {
     return true;
   }
   if (key !== "introduction") {

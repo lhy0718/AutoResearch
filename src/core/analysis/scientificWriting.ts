@@ -6112,9 +6112,9 @@ function strengthenadapterRelatedWorkFallback(section: PaperManuscriptSection): 
   return {
     ...section,
     paragraphs: [
-      "Existing PEFT studies give three comparison axes for this study. quantized adapter anchors the memory-efficiency axis by showing that low-rank, quantized adaptation can make larger-model finetuning feasible; MAPLE and other benchmarking papers anchor the evaluation-axis by comparing methods across broader task or model settings; adapter-variant papers anchor the mechanism axis by changing the adapter parameterization itself.",
+      "Existing related studies give three comparison axes for this study. Resource-constrained adaptation work anchors the feasibility axis; benchmarking papers anchor the evaluation axis by comparing methods across broader task or model settings; adapter-variant papers anchor the mechanism axis by changing the update parameterization itself.",
       "This paper occupies a narrower empirical slot on those axes. It keeps the adapter family, backbone, local compute regime, and evaluation harness fixed, then asks whether adapter condition parameters changes remain visible within the executed condition-parameter grid. The cited work therefore motivates the design and claim ceiling, but it is not treated as a condition-matched baseline for the local condition-grid preflight.",
-      "That distinction is important for interpreting the comparator. The numerical baseline in this manuscript is the locked baseline condition inside the executed run, not a literature result. Prior PEFT papers instead define why the local condition-parameter question is worth testing: memory-aware adaptation makes small-budget tuning plausible, benchmark papers show that task choice can change conclusions, and adapter variants show that capacity allocation remains a live design issue.",
+      "That distinction is important for interpreting the comparator. The numerical baseline in this manuscript is the locked baseline condition inside the executed run, not a literature result. Prior work instead defines why the local condition-parameter question is worth testing: memory-aware adaptation makes small-budget tuning plausible, benchmark papers show that task choice can change conclusions, and adapter variants show that capacity allocation remains a live design issue.",
       "The related-work role is therefore conservative. The manuscript can position this bounded local condition-grid pilot as useful for deciding whether a larger follow-up is warranted, but it should not claim to outperform quantized adapter, MAPLE, or adapter-variant methods. Those works differ in model scale, task mix, adapter family, or evaluation objective, so they support framing and claim boundaries rather than direct superiority language."
     ]
   };
@@ -6196,7 +6196,7 @@ function buildConditionResultNarrativeParagraphs(context: ExperimentArtifactCont
   const memoryNote = context.results.memory_notes.find(Boolean);
   const paragraphs = [
     "Table 1 is part of the evidential core of the paper because it preserves the executed comparison set. It separates the locked baseline from the four higher-rank cells and keeps completed-seed coverage visible, so the positive study-level average is not detached from the actual condition coverage. This makes the result stronger than a single headline score while still keeping the claim limited to the evaluated grid.",
-    "The baseline row also changes the interpretation of the high-rank rows. The study does not ask whether every adapter configuration is better than every other configuration; it asks whether the higher-rank cells clear a fixed local baseline under the same evaluation harness. Reading the table this way keeps the comparison aligned with the experimental design and avoids turning a targeted preflight into a broad PEFT ranking.",
+    "The baseline row also changes the interpretation of the high-rank rows. The study does not ask whether every adapter configuration is better than every other configuration; it asks whether the higher-rank cells clear a fixed local baseline under the same evaluation harness. Reading the table this way keeps the comparison aligned with the experimental design and avoids turning a targeted preflight into a broad method-family ranking.",
     conditionLabels.length > 0 && seedCounts.length > 0
       ? `The repeated-seed structure makes the condition labels more informative than a one-run ablation. The evaluated cells are ${joinHumanList(conditionLabels)}, and the retained seed counts are ${joinHumanList(seedCounts)} per reported cell. This coverage matters because the strongest cell can have a favorable mean while individual seeds still move in different directions, which is exactly the instability that a local preflight should expose before scale-up.`
       : "",
@@ -6425,8 +6425,8 @@ function softenAppendixPromiseInSection(section: PaperManuscriptSection): PaperM
           "routing brief supplementary summaries to the appendix"
         )
         .replace(
-          /\bTogether with the narrower executed grid and a minor supplementary formatting issue, these gaps make the study best read as a cautious empirical note rather than as a definitive PEFT comparison\.?/giu,
-          "Together with the narrower executed grid and incomplete compute instrumentation, these gaps make the study best read as a cautious empirical note rather than as a definitive PEFT comparison."
+          /\bTogether with the narrower executed grid and a minor supplementary formatting issue, these gaps make the study best read as a cautious empirical note rather than as a definitive method-family comparison\.?/giu,
+          "Together with the narrower executed grid and incomplete compute instrumentation, these gaps make the study best read as a cautious empirical note rather than as a definitive method-family comparison."
         )
         .replace(/\bminor supplementary formatting issue\b/giu, "incomplete compute instrumentation")
     )
@@ -7166,7 +7166,7 @@ function isOffTopicLmBenchmarkRelatedWorkAxis(value: string): boolean {
   ) {
     return true;
   }
-  return !/\b(?:adapter|PEFT|adapter|parameterization|low-rank|instruction|fine[- ]?tun(?:e|ing)?|quantization|benchmark|evaluation|resource|memory|dropout|rank|prompting|control)\b/iu.test(
+  return !/\b(?:adapter|method-family|parameterization|low-rank|instruction|fine[- ]?tun(?:e|ing)?|quantization|benchmark|evaluation|resource|memory|dropout|rank|prompting|control)\b/iu.test(
     text
   );
 }
@@ -7180,7 +7180,7 @@ function completeRelatedWorkClustersForProtocol(
   }
   return uniqueStrings([
     ...clusters,
-    "PEFT and adapter adapter design",
+    "adapter and parameterization design",
     "resource-budgeted instruction tuning",
     "benchmark evaluation and claim calibration"
   ]).slice(0, 4);
@@ -7337,7 +7337,7 @@ function rewriteReaderFacingProvenancePhrases(value: string): string {
     .replace(/\bIn the executable run metadata and released study summary,\s*([^.,]+?)\s+is identified as the trained backbone/giu, "The reported study uses $1 as the trained backbone")
     .replace(/\bThe executable run metadata identifies\s+([^.,]+?)\s+as the trained backbone/giu, "The reported study uses $1 as the trained backbone")
     .replace(/\bThe emphasis on benchmark accuracy rather than judge-based preference scoring is also compatible with prior warnings that chatbot evaluation can be noisy and order sensitive\./giu, "The emphasis on benchmark accuracy rather than judge-based preference scoring avoids introducing a separate evaluator-noise variable into this small benchmark.")
-    .replace(/\bThis narrowing follows the same resource-conscious logic emphasized in prior PEFT work, where fixed memory and runtime budgets make selective comparison preferable to shallow coverage of every configuration\./giu, "This narrowing treats fixed memory and runtime budgets as the governing design constraint, making selective comparison preferable to shallow coverage of every configuration.")
+    .replace(/\bThis narrowing follows the same resource-conscious logic emphasized in prior method-family work, where fixed memory and runtime budgets make selective comparison preferable to shallow coverage of every configuration\./giu, "This narrowing treats fixed memory and runtime budgets as the governing design constraint, making selective comparison preferable to shallow coverage of every configuration.")
     .replace(/\bBecause several of these latter sources are available only through partial extraction in the present evidence base, they are used here for framing rather than detailed quantitative comparison\./giu, "Because those strands are not direct condition-matched baselines, they are used here for framing rather than detailed quantitative comparison.")
     .replace(/\bThe benchmark also contributes methodologically\./giu, "The benchmark also illustrates a scoped reporting protocol for this setting.")
     .replace(/\bTo isolate condition parameters as much as the budget allowed,\s*the protocol held the optimizer,\s*learning-rate schedule,\s*adapter target modules,\s*effective batch size,\s*token budget,\s*and capped training set constant across cells\./giu, "To isolate condition parameters as much as the budget allowed, the protocol fixed the optimizer, learning-rate schedule, adapter target modules, effective batch size, and capped data budget; the preserved artifacts do not independently verify identical consumed token counts for every cell.")
@@ -7386,8 +7386,8 @@ function rewriteReaderFacingProvenancePhrases(value: string): string {
     .replace(/\brepeated-seed condition-parameter screen\b/giu, "condition-grid pilot")
     .replace(/\blocal repeated-seed preflight\b/giu, "local condition-grid preflight")
     .replace(/\brepeated-seed preflight\b/giu, "condition-grid preflight")
-    .replace(/\bThat reading is consistent with prior PEFT work such as quantized adapter and neighboring low-budget adaptation studies\b/giu, "That reading is consistent with prior PEFT and neighboring low-budget adaptation studies")
-    .replace(/\bquantized adapter-scale efficiency work and broader benchmark papers such as MAPLE both suggest\b/giu, "Efficiency-oriented PEFT work and broader benchmark papers both suggest")
+    .replace(/\bThat reading is consistent with prior method-family work such as quantized adapter and neighboring low-budget adaptation studies\b/giu, "That reading is consistent with prior method-family and neighboring low-budget adaptation studies")
+    .replace(/\bquantized adapter-scale efficiency work and broader benchmark papers such as benchmark-suite studies both suggest\b/giu, "Efficiency-oriented method-family work and broader benchmark papers both suggest")
     .replace(/\bthe released comparison table and statistical summary\b/giu, "the condition-level comparison")
     .replace(/\bthe released study summary\b/giu, "the study summary")
     .replace(/\bIn the released summary,\s*/giu, "In the reported results, ")
@@ -8063,10 +8063,10 @@ function buildSectionParagraphCandidates(
             ? [
                 "This positioning is intentionally narrower than a broad novelty claim: it clarifies where the current study overlaps with prior baselines and where evidence remains thin.",
                 context.protocol_kind === "lm_benchmark"
-                  ? "For this manuscript, the cited PEFT literature supplies framing axes rather than direct numerical baselines. The condition-matched comparator remains the locked baseline inside the executed run, while prior work defines the memory-efficiency, benchmark-design, and adapter-mechanism questions that make a repeated-seed condition-parameter screen scientifically interpretable."
+                  ? "For this manuscript, the cited method-family literature supplies framing axes rather than direct numerical baselines. The condition-matched comparator remains the locked baseline inside the executed run, while prior work defines the memory-efficiency, benchmark-design, and adapter-mechanism questions that make a condition-parameter screen scientifically interpretable."
                   : "For this manuscript, the cited literature supplies positioning anchors rather than direct condition-matched baselines. The condition-matched comparator remains the executed baseline inside the run, while prior work defines the methodological and evaluation questions that make the scoped experiment scientifically interpretable.",
                 context.protocol_kind === "lm_benchmark"
-                  ? "This separation keeps the contribution modest but clearer. The paper can argue that a local condition-grid preflight is a useful evidence filter for PEFT tuning decisions, while avoiding claims that would require a broader model suite, a different task mix, or direct reproduction of the cited methods."
+                  ? "This separation keeps the contribution modest but clearer. The paper can argue that a local condition-grid preflight is a useful evidence filter for tuning decisions, while avoiding claims that would require a broader model suite, a different task mix, or direct reproduction of the cited methods."
                   : "This separation keeps the contribution modest but clearer. The paper can argue that the executed comparison is a useful evidence filter for the stated research question, while avoiding claims that would require a broader dataset suite, a different task mix, or direct reproduction of the cited methods."
               ]
             : [],
@@ -8288,7 +8288,7 @@ function buildSectionParagraphCandidates(
       if (expanded && expansionPass >= 4) {
         baseSentences.push([
           "The evidence ceiling also constrains related-work claims: external papers motivate the comparison, but they are not substitutes for direct reproduction under the present budget.",
-          "Consequently, the manuscript avoids saying that the observed interaction is a general PEFT property, and instead reports the narrower empirical signal visible in the completed artifacts."
+          "Consequently, the manuscript avoids saying that the observed interaction is a general method-family property, and instead reports the narrower empirical signal visible in the completed artifacts."
         ]);
       }
 

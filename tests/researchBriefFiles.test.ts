@@ -99,7 +99,7 @@ describe("researchBriefFiles", () => {
       constraints: "2x RTX 4090 only; public datasets only; seed=42 everywhere.",
       researchQuestion: "Which lightweight recipe choice improves benchmark accuracy most reliably under the local budget?",
       whySmallExperiment: "Public benchmarks exist; four-condition comparison is feasible; a named baseline is available.",
-      baselineComparator: "Baseline name: tuned LoRA baseline; Why relevant: standard compact-model comparator; Comparison dimension: accuracy and runtime.",
+      baselineComparator: "Baseline name: tuned adapter baseline; Why relevant: standard compact-model comparator; Comparison dimension: accuracy and runtime.",
       datasetTaskBench: "Datasets: public instruction subset; Task type: instruction tuning and zero-shot evaluation; Validation discipline: fixed seed and fixed prompts.",
       targetComparison: "Proposed method: strongest alternative recipe; Comparator: tuned baseline; Dimension: benchmark accuracy delta.",
       minimumAcceptableEvidence: "At least +1.0 point over baseline; all planned conditions must execute; bootstrap CI required.",

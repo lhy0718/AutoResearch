@@ -427,10 +427,10 @@ describe("harness validators", () => {
         "\\documentclass[11pt]{article}",
         "\\usepackage[review]{ACL2023}",
         "\\begin{document}",
-        "\\noindent\\textbf{Keywords:} LoRA, dropout",
+        "\\noindent\\textbf{Keywords:} method, regularization",
         "\\section{Related Work}",
-        "LoRA work motivates this setting. \\cite{hu2021lora,dettmers2023qlora}",
-        "QLoRA work motivates this setting too. \\cite{dettmers2023qlora,hu2021lora}",
+        "Method-family work motivates this setting. \\cite{paperA,paperB}",
+        "A second method-family paper motivates this setting too. \\cite{paperB,paperA}",
         "\\bibliographystyle{plain}",
         "\\bibliography{references}",
         "\\end{document}"
@@ -439,7 +439,7 @@ describe("harness validators", () => {
     );
     await writeFile(
       path.join(runDir, "paper", "references.bib"),
-      "@article{hu2021lora, title={LoRA}}\n@article{dettmers2023qlora, title={QLoRA}}\n",
+      "@article{paperA, title={Method A}}\n@article{paperB, title={Method B}}\n",
       "utf8"
     );
     await writeJson(path.join(runDir, "paper", "render_validation.json"), {

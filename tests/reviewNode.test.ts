@@ -1248,7 +1248,7 @@ describe("review node", () => {
       path.join(runDir, "experiment_plan.yaml"),
       [
         "selected_design:",
-        "  title: P6 repeated-seed LoRA validation",
+        "  title: P6 repeated-seed adapter validation",
         "  baselines:",
         "    - baseline_condition",
         "  evaluation_steps:",
@@ -1275,8 +1275,8 @@ describe("review node", () => {
       plan_context: {
         selected_design: {
           id: "p6",
-          title: "P6 repeated-seed LoRA validation",
-          summary: "Validate repeated-seed LoRA comparison.",
+          title: "P6 repeated-seed adapter validation",
+          summary: "Validate repeated-seed adapter comparison.",
           selected_hypothesis_ids: ["h_1"],
           metrics: ["accuracy_delta_vs_baseline"],
           baselines: ["baseline_condition"],
@@ -1388,7 +1388,7 @@ describe("review node", () => {
       path.join(runDir, "experiment_plan.yaml"),
       [
         "selected_design:",
-        "  title: Single-run LoRA validation",
+        "  title: Single-run adapter validation",
         "  baselines:",
         "    - baseline_condition",
         "  evaluation_steps:",
@@ -1414,8 +1414,8 @@ describe("review node", () => {
       plan_context: {
         selected_design: {
           id: "p6-single",
-          title: "Single-run LoRA validation",
-          summary: "Validate a bounded local LoRA comparison.",
+          title: "Single-run adapter validation",
+          summary: "Validate a bounded local adapter comparison.",
           selected_hypothesis_ids: ["h_1"],
           metrics: ["accuracy_delta_vs_baseline"],
           baselines: ["baseline_condition"],

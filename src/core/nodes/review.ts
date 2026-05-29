@@ -757,8 +757,8 @@ function buildPromptFocus(
 ): string {
   const ids = new Set(diagnostics.map((diagnostic) => diagnostic.id));
   const findingText = findings.map((finding) => `${finding.id} ${finding.title} ${finding.detail} ${finding.fix_hint ?? ""}`).join(" ").toLowerCase();
-  if (node === "collect_papers" || ids.has("canonical_lora_qlora_references_missing")) {
-    return "Require canonical-method coverage for the topic before downstream hypothesis/design work; for LoRA/QLoRA topics, include original LoRA and QLoRA sources.";
+  if (node === "collect_papers" || ids.has("canonical_method_references_missing")) {
+    return "Require canonical-method coverage for the topic before downstream hypothesis/design work; when a topic centers on a named method family, include the original method sources.";
   }
   if (node === "generate_hypotheses" && findingText.includes("claims outpace")) {
     return "When objective metrics are not met, force the hypothesis and claim set to downgrade or reformulate; do not preserve success or interaction framing that the evidence did not support.";

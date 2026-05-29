@@ -136,7 +136,7 @@ describe("paper submission sanitization", () => {
 
     expect(tex).toContain("This paper reports a fixed-budget experimental pilot");
     expect(tex).toContain("The contribution is a cautious local preflight over a configured condition set");
-    expect(tex).toContain("Nearby PEFT, adapter, and instruction-tuning studies provide context");
+    expect(tex).toContain("Nearby method-family, task-design, and evaluation studies provide context");
     expect(tex).not.toContain("This draft studies");
     expect(tex).not.toContain("Primary metric:");
     expect(tex).not.toContain("failed-run visibility");
@@ -340,7 +340,7 @@ describe("paper submission sanitization", () => {
         {
           heading: "Related Work",
           paragraphs: [
-            "Prior PEFT literature motivates memory-aware finetuning and task-sensitive evaluation."
+            "Prior method-family literature motivates memory-aware finetuning and task-sensitive evaluation."
           ]
         }
       ]
@@ -381,7 +381,7 @@ describe("paper submission sanitization", () => {
     expect(tex).toContain("Parameter-efficient fine-tuning is often used");
     expect(tex).not.toContain("fixed in advance. \\cite{paperA}");
     expect(tex).not.toContain("locked internal baseline. \\cite{paperB}");
-    expect(tex).toContain("Prior PEFT literature motivates memory-aware finetuning and task-sensitive evaluation. \\cite{paperA}");
+    expect(tex).toContain("Prior method-family literature motivates memory-aware finetuning and task-sensitive evaluation. \\cite{paperA}");
   });
 
   it("does not attach literature citations to Method execution and protocol records", () => {
@@ -399,7 +399,7 @@ describe("paper submission sanitization", () => {
         },
         {
           heading: "Related Work",
-          paragraphs: ["Prior PEFT literature motivates memory-aware finetuning and task-sensitive evaluation."]
+          paragraphs: ["Prior method-family literature motivates memory-aware finetuning and task-sensitive evaluation."]
         }
       ]
     };
@@ -438,7 +438,7 @@ describe("paper submission sanitization", () => {
 
     expect(tex).not.toContain("factorial design crossing adapter rank with dropout. \\cite{paperA}");
     expect(tex).not.toContain("Benchmark Task A and Benchmark Task B, and seed 17. \\cite{paperB}");
-    expect(tex).toContain("Prior PEFT literature motivates memory-aware finetuning and task-sensitive evaluation. \\cite{paperA}");
+    expect(tex).toContain("Prior method-family literature motivates memory-aware finetuning and task-sensitive evaluation. \\cite{paperA}");
   });
 
   it("does not repeat the same citation bundle across multiple paragraphs in one section", () => {
@@ -451,7 +451,7 @@ describe("paper submission sanitization", () => {
           {
             heading: "Related Work",
             paragraphs: [
-              "Prior PEFT literature motivates memory-aware finetuning.",
+              "Prior method-family literature motivates memory-aware finetuning.",
               "Adapter literature also motivates small-budget model adaptation.",
               "Benchmarking literature motivates cautious interpretation."
             ]
@@ -701,7 +701,7 @@ describe("paper submission sanitization", () => {
           {
             heading: "Introduction",
             paragraphs: [
-              "Prior PEFT work motivates this setup (e.g., doi:10.48550/arxiv.2305.14314; 75bc30bf394625c784ea59f8c2fe04718a4b4042)."
+              "Prior method-family work motivates this setup (e.g., doi:10.48550/arxiv.2305.14314; 75bc30bf394625c784ea59f8c2fe04718a4b4042)."
             ]
           }
         ]
@@ -845,8 +845,8 @@ describe("paper submission sanitization", () => {
             paragraphs: [
               "The cited work therefore motivates the design and claim ceiling, but it is not treated as a condition-matched baseline for the local 4x2 condition-parameter preflight.",
               "The manuscript can position this bounded local condition-grid pilot as useful for deciding whether a larger follow-up is warranted, but it should not claim to outperform quantized adapter, MAPLE, or adapter-variant methods.",
-              "That distinction is important for interpreting the comparator. The numerical baseline in this manuscript is the locked baseline condition inside the executed run, not a literature result. Prior PEFT papers instead define why the local condition-parameter question is worth testing: memory-aware adaptation makes small-budget tuning plausible, benchmark papers show that task choice can change conclusions, and adapter variants show that capacity allocation remains a live design issue.",
-              "Accordingly, external PEFT papers serve as framing comparators rather than numerical baselines for this manuscript. The relevant baseline here is the locked locked baseline condition inside the executed run. Prior work motivates why the question matters but differences in model scale, task mix, adapter family, and evaluation objective prevent direct superiority claims."
+              "That distinction is important for interpreting the comparator. The numerical baseline in this manuscript is the locked baseline condition inside the executed run, not a literature result. Prior method-family papers instead define why the local condition-parameter question is worth testing: memory-aware adaptation makes small-budget tuning plausible, benchmark papers show that task choice can change conclusions, and adapter variants show that capacity allocation remains a live design issue.",
+              "Accordingly, external method-family papers serve as framing comparators rather than numerical baselines for this manuscript. The relevant baseline here is the locked locked baseline condition inside the executed run. Prior work motivates why the question matters but differences in model scale, task mix, adapter family, and evaluation objective prevent direct superiority claims."
             ]
           },
           {
@@ -909,7 +909,7 @@ describe("paper submission sanitization", () => {
     expect(text).toContain("Table 1 reports the condition mean accuracies");
     expect(text).toContain("the reported analyses do not report optimizer choice, adapter target modules");
     expect(text).toContain("Table 1 reports the condition mean accuracies");
-    expect(text).toContain("The comparison to external PEFT methods is therefore one of scope and experimental role");
+    expect(text).toContain("The comparison to external method-family methods is therefore one of scope and experimental role");
     expect(text).toContain("executed metrics identify the selected backbone");
     expect(text).toContain("The fixed search space includes Fixed training settings included");
     expect(text).not.toContain("does not expose a full eight-cell accuracy table");
@@ -1037,8 +1037,8 @@ describe("paper submission sanitization", () => {
         {
           heading: "Related Work",
           paragraphs: [
-            "Prior PEFT work establishes the broader feasibility and comparison context but not a directly transferable answer to the present condition-parameter question. quantized adapter and adapter-variant studies motivate the design.",
-            "The closest cited work frames prompting and control, evaluation and benchmarking, and PEFT and adapter adapter design rather than a condition-matched reproduction of the present run.",
+            "Prior method-family work establishes the broader feasibility and comparison context but not a directly transferable answer to the present condition-parameter question. quantized adapter and adapter-variant studies motivate the design.",
+            "The closest cited work frames prompting and control, evaluation and benchmarking, and method-family and adapter adapter design rather than a condition-matched reproduction of the present run.",
             "Accordingly, the manuscript's numerical comparator is internal rather than external: baseline condition is the locked baseline inside the completed run."
           ]
         }

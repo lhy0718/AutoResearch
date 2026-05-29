@@ -639,7 +639,7 @@ describe("objectiveMetric", () => {
     expect(evaluation.summary).toContain("not met");
   });
 
-  it("does not satisfy a delta objective with absolute baseline accuracy from PEFT metrics", () => {
+  it("does not satisfy a delta objective with absolute baseline accuracy from adapter metrics", () => {
     const objective = "at least +1.0 percentage point over the named tuned baseline";
     const profile = normalizeObjectiveMetricProfile(
       {

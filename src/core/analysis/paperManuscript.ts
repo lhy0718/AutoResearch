@@ -579,7 +579,7 @@ function sanitizeSubmissionSurfaceText(text: string, context: { sectionHeading?:
   if (/related\s+work/iu.test(heading) && isSubmissionRelatedWorkResidue(cleaned)) {
     return /closest prior studies|abstract-only|planner-timeout|full-text fallback/iu.test(cleaned)
       ? "For this manuscript, prior work motivates the condition-parameter question and local-budget evaluation design; numerical claims remain grounded in the executed run artifacts."
-      : "Nearby PEFT, adapter, and instruction-tuning studies provide context for memory efficiency, benchmark sensitivity, and adapter design, but they do not replace the locked baseline comparison in this study.";
+      : "Nearby method-family, task-design, and evaluation studies provide context for feasibility, benchmark sensitivity, and design choices, but they do not replace the locked baseline comparison in this study.";
   }
   if (isSubmissionProcessResidue(cleaned)) {
     if (/introduction/iu.test(heading)) {
@@ -1204,12 +1204,12 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       headingKey === "method" ? "" : "Evaluation spans Benchmark Task A and Benchmark Task B."
     )
     .replace(
-      /\bThis cautious interpretation is consistent with prior low-budget adapter and (?:PEFT|adapter) studies \(e\.g\.,\s*quantized adapter and related benchmarking work\) that also treat adapter configuration as consequential,\s*while recognizing that the present study is much smaller and less stable than the settings used in broader adaptation papers\./giu,
-      "This cautious interpretation is consistent with prior PEFT studies that treat adapter configuration as consequential, while recognizing that the present study is much smaller and less stable than broader adaptation settings."
+      /\bThis cautious interpretation is consistent with prior low-budget adapter and (?:method-family|adapter) studies \(e\.g\.,\s*quantized adapter and related benchmarking work\) that also treat adapter configuration as consequential,\s*while recognizing that the present study is much smaller and less stable than the settings used in broader adaptation papers\./giu,
+      "This cautious interpretation is consistent with prior method-family studies that treat configuration choices as consequential, while recognizing that the present study is much smaller and less stable than broader settings."
     )
     .replace(
-      /\bThis cautious interpretation is consistent with prior low-budget adapter and (?:PEFT|adapter) studies \(e\.g\.,\s*quantized adapter and related benchmarking work\)/giu,
-      "This cautious interpretation is consistent with prior PEFT studies"
+      /\bThis cautious interpretation is consistent with prior low-budget adapter and (?:method-family|adapter) studies \(e\.g\.,\s*quantized adapter and related benchmarking work\)/giu,
+      "This cautious interpretation is consistent with prior method-family studies"
     )
     .replace(
       /\bThe reporting pipeline produced encouraging audit signals but not a perfectly clean record\.[^.]*\.\s*Verifier feedback records a pass,\s*and the review context recommends advancement with no blocking review issues\.[^.]*\.\s*The most defensible interpretation is that the workflow successfully preserved both its positive outputs and its caveats,\s*but that the supporting record still requires reconciliation before stronger claims are warranted\./giu,
@@ -1240,12 +1240,12 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       "presented table"
     )
     .replace(
-      /\bExisting PEFT studies define three comparison axes relevant here\.\s*quantized adapter emphasizes the memory-efficiency axis by showing how low-rank adaptation combined with quantization can make finetuning feasible on constrained hardware;\s*MAPLE and related benchmark-oriented studies emphasize the evaluation axis by comparing methods across broader task or model settings;\s*adapter-variant papers emphasize the mechanism axis by changing the parameterization of the update itself\./giu,
-      "Existing PEFT studies define three comparison axes relevant here: memory efficiency under constrained hardware, evaluation breadth across task or model settings, and adapter-parameterization choices that change the update mechanism."
+      /\bExisting related studies define three comparison axes relevant here\.\s*quantized adapter emphasizes the memory-efficiency axis by showing how low-rank adaptation combined with quantization can make finetuning feasible on constrained hardware;\s*benchmark-oriented studies emphasize the evaluation axis by comparing methods across broader task or model settings;\s*adapter-variant papers emphasize the mechanism axis by changing the parameterization of the update itself\./giu,
+      "Existing related studies define three comparison axes relevant here: feasibility under constrained resources, evaluation breadth across task or model settings, and parameterization choices that change the update mechanism."
     )
     .replace(
       /\bAccordingly,\s*prior work is used here as framing rather than as a condition-matched baseline\.\s*The comparator of record is the internal baseline condition,\s*no-dropout condition inside the executed run,\s*whereas quantized adapter-,\s*MAPLE-,\s*and adapter-variant results differ in scale,\s*task mix,\s*adapter family,\s*or evaluation objective and therefore set the interpretation context rather than a direct performance target\./giu,
-      "Accordingly, prior work is used here as framing rather than as a condition-matched baseline. The comparator of record is the internal baseline condition, no-dropout condition inside the executed run; external PEFT results differ in scale, task mix, adapter family, or evaluation objective and therefore set the interpretation context rather than a direct performance target."
+      "Accordingly, prior work is used here as framing rather than as a condition-matched baseline. The comparator of record is the internal baseline condition, no-dropout condition inside the executed run; external method-family results differ in scale, task mix, adapter family, or evaluation objective and therefore set the interpretation context rather than a direct performance target."
     )
     .replace(/\baccuracy_delta_vs_baseline\b/giu, "baseline-relative accuracy gain")
     .replace(/\baverage_accuracy\b/giu, "average accuracy")
@@ -1296,10 +1296,10 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       "The compact record still omits several implementation details that would normally be standard in an empirical paper, including optimizer family, scheduler details beyond the scalar learning rate, adapter target modules, adapter scaling, and interval-construction details. These omissions materially narrow reproducibility and interpretability."
     ).replace(
       /\bIn addition,\s*some of the surrounding related-work material available to this paper came from abstract-level or timeout-limited extraction rather than full-text comparative review\./giu,
-      "In addition, the related-work comparison remains narrower than a full survey of PEFT rank and regularization studies."
+      "In addition, the related-work comparison remains narrower than a full survey of method-family parameter and regularization studies."
     ).replace(
       /\bsome of the surrounding related-work material available to this paper came from abstract-level or timeout-limited extraction rather than full-text comparative review\./giu,
-      "the related-work comparison remains narrower than a full survey of PEFT rank and regularization studies."
+      "the related-work comparison remains narrower than a full survey of method-family parameter and regularization studies."
     ).replace(
       /\bSpecification may be underspecified and require narrower scope\.?/giu,
       ""
@@ -1313,7 +1313,7 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       )
       .replace(
         /\bThe manuscript can position this bounded local condition-grid pilot as useful for deciding whether a larger follow-up is warranted,\s*but it should not claim to outperform quantized adapter,\s*MAPLE,\s*or adapter-variant methods\./giu,
-        "The comparison to external PEFT methods is therefore one of scope and experimental role: those works define larger memory, benchmark, or architecture contexts, while this manuscript supplies a small controlled pilot for one configured condition grid."
+        "The comparison to external method-family methods is therefore one of scope and experimental role: those works define larger memory, benchmark, or architecture contexts, while this manuscript supplies a small controlled pilot for one configured condition grid."
       );
   }
   return repairReaderVisibleMetricNames(repaired);
@@ -1465,9 +1465,9 @@ function repairRelatedWorkComparatorRedundancy(paragraphs: string[]): string[] {
     const repeatsInternalComparator =
       /\b(?:numerical|relevant)\s+baseline\b/iu.test(paragraph) &&
       /\blocked baseline condition\b/iu.test(paragraph) &&
-      /\bPrior (?:PEFT|work)\b/iu.test(paragraph);
+      /\bPrior (?:method-family|work)\b/iu.test(paragraph);
     const repeatsExternalFramingComparator =
-      /\bexternal PEFT papers serve as framing comparators\b/iu.test(paragraph) &&
+      /\bexternal papers serve as framing comparators\b/iu.test(paragraph) &&
       /\blocked baseline condition\b/iu.test(paragraph);
     const repeatsConservativeRelatedWorkRole =
       insertedInternalComparatorSynthesis &&
@@ -1476,7 +1476,7 @@ function repairRelatedWorkComparatorRedundancy(paragraphs: string[]): string[] {
     if (repeatsInternalComparator || repeatsExternalFramingComparator) {
       if (!insertedInternalComparatorSynthesis) {
         result.push(
-          "The numerical comparator in this manuscript is the locked locked baseline.0 condition inside the executed run. Prior PEFT work instead supplies the design context: memory-aware finetuning motivates local feasibility, benchmark papers motivate task-sensitive evaluation, and adapter-variant studies motivate checking whether capacity allocation changes outcomes."
+          "The numerical comparator in this manuscript is the locked locked baseline.0 condition inside the executed run. Prior work instead supplies the design context: memory-aware finetuning motivates local feasibility, benchmark papers motivate task-sensitive evaluation, and adapter-variant studies motivate checking whether capacity allocation changes outcomes."
         );
         insertedInternalComparatorSynthesis = true;
       }
@@ -2775,7 +2775,7 @@ function buildAutomaticManuscriptAppendix(
     {
       heading: "Supplementary Boundary Notes",
       paragraphs: [
-        `The strongest allowed claim is a bounded candidate-selection claim. ${claimCeilingEvidenceSentence} The same evidence does not support a general claim about adapter regularization, broader instruction-following quality, or superiority over external PEFT methods.`,
+        `The strongest allowed claim is a bounded candidate-selection claim. ${claimCeilingEvidenceSentence} The same evidence does not support a general claim about adapter regularization, broader instruction-following quality, or superiority over external method-family methods.`,
         "Comparative language is tied only to the executed condition-parameter grid. External papers motivate the design space and the need for budget-aware evaluation, but they are not treated as condition-matched baselines. This is why the related-work section frames prior work as context and why the discussion keeps the observed signal separate from mechanism-level or model-family conclusions.",
         "Quantitative claims are restricted to values that are present in the result table, metric table, or structured statistical summary. Runtime, memory, and train-loss dispersion are reported as feasibility and reproducibility diagnostics because the available records do not establish a condition-level efficiency ranking. The run accounting used here reports scheduled and executed trials explicitly.",
         "The result is therefore best read as a bounded preflight report: it has a research question, a comparator, executed experiments, quantitative tables, uncertainty notes, and limitations, while still naming the larger replication required before a stronger paper claim would be justified."
@@ -2969,13 +2969,13 @@ function shouldRenderSubmissionCitationsForParagraph(heading: string, paragraph:
     ) {
       return false;
     }
-    return /\b(?:prior|Related Work|low-budget evidence|fixed-budget studies|PEFT|quantized adapter|adapter|benchmarking|literature)\b/iu.test(paragraph);
+    return /\b(?:prior|Related Work|low-budget evidence|fixed-budget studies|method-family|quantized adapter|adapter|benchmarking|literature)\b/iu.test(paragraph);
   }
   if (key === "limitations") {
-    return /\b(?:model identifier\/Qwen2\.5|the configured fallback backbone|Benchmark Task A|Benchmark Task B|PEFT|quantized adapter|MAPLE|adapter|adapter|benchmark)\b/iu.test(paragraph);
+    return /\b(?:model identifier\/configured-backbone|the configured fallback backbone|Benchmark Task A|Benchmark Task B|method-family|quantized adapter|benchmark suite|adapter|benchmark)\b/iu.test(paragraph);
   }
   if (key === "conclusion") {
-    return /\b(?:PEFT|quantized adapter|MAPLE|adapter|benchmark studies|literature)\b/iu.test(paragraph);
+    return /\b(?:method-family|quantized adapter|benchmark suite|adapter|benchmark studies|literature)\b/iu.test(paragraph);
   }
   if (key !== "introduction") {
     return false;

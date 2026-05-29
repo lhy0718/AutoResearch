@@ -124,15 +124,15 @@ export function evaluatePaperScaleDiagnostics(input: {
   const canonicalReferenceGap = detectCanonicalReferenceGap(input.topic, input.report, input.bibliographyText);
   if (canonicalReferenceGap) {
     diagnostics.push({
-      id: "canonical_lora_qlora_references_missing",
+      id: "canonical_method_references_missing",
       severity: "warning",
       category: "related_work_depth",
       source_node: "collect_papers",
       target_node: "collect_papers",
-      summary: "Related work appears to miss canonical LoRA/QLoRA sources for a LoRA/QLoRA topic.",
+      summary: "Related work appears to miss canonical sources for a named method-family topic.",
       evidence: canonicalReferenceGap,
-      recommended_action: "Collect and cite the original LoRA and QLoRA papers before paper-scale review.",
-      recheck_condition: "The bibliography includes canonical LoRA/QLoRA references when the topic or metrics center on LoRA/QLoRA."
+      recommended_action: "Collect and cite the original method-family papers before paper-scale review.",
+      recheck_condition: "The bibliography includes canonical references when the topic or metrics center on a named method family."
     });
   }
 
@@ -325,19 +325,21 @@ function detectCanonicalReferenceGap(topic: string, report: AnalysisReport, bibl
     ...(report.primary_findings ?? []),
     ...(report.paper_claims ?? []).map((claim) => claim.claim)
   ].join(" ");
-  if (!/\b(?:lora|qlora|peft|low[-\s]?rank adaptation)\b/iu.test(text)) {
+  const methodMatch =
+    text.match(/\b(?:canonical|original|seminal)\s+([A-Z][A-Za-z0-9-]{2,40})\b/u)
+    || text.match(/\b([A-Z][A-Za-z0-9-]{2,40})\s+(?:method|model|algorithm|framework|family)\b/u);
+  const methodName = (methodMatch?.[1] || "").replace(/[^A-Za-z0-9-]+/gu, "").trim();
+  if (!methodName || /^(?:The|This|That|Prior|Original|Canonical|Related|Benchmark)$/u.test(methodName)) {
     return undefined;
   }
   const bibliography = (bibliographyText || "").toLowerCase();
   if (!bibliography) {
-    return "No bibliography text was available for LoRA/QLoRA canonical-reference audit.";
+    return `No bibliography text was available for canonical-reference audit of ${methodName}.`;
   }
-  const hasLora = bibliography.includes("hu") && bibliography.includes("low-rank adaptation");
-  const hasQlora = bibliography.includes("dettmers") || bibliography.includes("qlora");
-  if (hasLora && hasQlora) {
+  if (bibliography.includes(methodName.toLowerCase())) {
     return undefined;
   }
-  return `Canonical coverage missing: LoRA=${hasLora ? "present" : "missing"}, QLoRA=${hasQlora ? "present" : "missing"}.`;
+  return `Canonical coverage may be missing for named method family: ${methodName}.`;
 }
 
 function detectResourceClaimRisk(report: AnalysisReport): string | undefined {

@@ -2396,14 +2396,14 @@ describe("analyzePapers node", () => {
     };
     await writeCorpus(runId, [
       {
-        paper_id: "relevant_compact_lora",
+        paper_id: "relevant_compact_adapter",
         title: "Instruction Tuning with Low-Rank Adaptation for Compact Open Language Models",
         abstract:
-          "A compact-model study of instruction tuning with LoRA under a bounded local budget.",
+          "A compact-model study of adaptation under a bounded local budget.",
         authors: ["Alice"],
         citation_count: 52,
         year: 2024,
-        pdf_url: "https://example.com/compact-lora.pdf"
+        pdf_url: "https://example.com/compact-adapter.pdf"
       },
       {
         paper_id: "relevant_recipe_tradeoff",
@@ -2474,10 +2474,10 @@ describe("analyzePapers node", () => {
 
     const manifestRaw = await readFile(path.join(".autolabos", "runs", runId, "analysis_manifest.json"), "utf8");
     const manifest = JSON.parse(manifestRaw);
-    expect(new Set(manifest.selectedPaperIds)).toEqual(new Set(["relevant_compact_lora", "relevant_recipe_tradeoff"]));
+    expect(new Set(manifest.selectedPaperIds)).toEqual(new Set(["relevant_compact_adapter", "relevant_recipe_tradeoff"]));
 
     const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
-    expect(summariesRaw).toContain('"paper_id":"relevant_compact_lora"');
+    expect(summariesRaw).toContain('"paper_id":"relevant_compact_adapter"');
     expect(summariesRaw).toContain('"paper_id":"relevant_recipe_tradeoff"');
     expect(summariesRaw).not.toContain('"paper_id":"off_topic_clinical_notes"');
     expect(summariesRaw).not.toContain('"paper_id":"off_topic_multimodal_recommender"');

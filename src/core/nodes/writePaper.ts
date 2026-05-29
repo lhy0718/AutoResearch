@@ -3250,7 +3250,7 @@ function sanitizeFinalRelatedWorkParagraph(heading: string, paragraph: string, i
     return paragraph;
   }
   return index % 2 === 0
-    ? "Nearby PEFT, adapter, and instruction-tuning studies provide context for memory efficiency, benchmark sensitivity, and adapter design, but they do not replace the locked baseline comparison in this study."
+    ? "Nearby method-family, task-design, and evaluation studies provide context for feasibility, benchmark sensitivity, and design choices, but they do not replace the locked baseline comparison in this study."
     : "For this manuscript, prior work is used to motivate the condition-parameter question and local-budget evaluation design; numerical claims remain grounded in the executed run artifacts.";
 }
 

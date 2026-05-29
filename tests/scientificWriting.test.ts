@@ -479,7 +479,7 @@ function makeTerseDraft(): PaperDraft {
 describe("scientificWriting", () => {
   it("removes paper-writing payload and unsupported repeated-seed phrasing from reader-facing prose", () => {
     const cleaned = sanitizePaperNarrativeText(
-      "Because the executed model identifier is not exposed in the writing payload, the paper-writing payload exposes only one explicit condition-to-baseline comparison and a set of per-condition confidence intervals, not the full numeric table for every cell. The present payload cannot establish robustness. The payload also contains an internal inconsistency. The repeated-seed design is therefore used as a screening instrument. The main report marks the objective as met, with accuracy_delta_vs_baseline=0.083332 against the >= 0.01 target, and verifier feedback status is pass. candidate condition b vs baseline condition improves accuracy delta vs baseline by 0.0833. The surviving preflight materials do not unambiguously identify the backbone actually used in the analyzed execution, so the manuscript can report only the registered preferred and fallback options rather than a confirmed executed model. The surviving compact record specifies the manipulated condition parameters and reported outcome metrics, but optimizer choice, learning rate, batch size, update count, prompt formatting, evaluation-harness specifics, and exact placement of dropout within adapter modules are not available. We therefore interpret the experiment as a governed preflight rather than as a fully reproducible benchmark recipe. For a small language-model preflight, the strongest defensible use of the result is triage: it nominates a configuration worth retesting under larger data or broader tasks, but it does not establish a general adapter rule. Consistent with prior compute-constrained adapter work and with the present run's generalizability limits in nearby resource-constrained studies, the conclusion remains narrow. Seed coverage is part of the evidence contract. The repeated condition cells with recorded seed coverage expose whether the observed mean gain is stable enough to motivate a larger run. The manuscript does not collapse this structure into a single best seed, and it keeps the baseline row visible so that later readers can audit the comparison unit. Hidden failures would invalidate this ceiling, but the run accounting used here reports scheduled and executed trials explicitly. That reading is consistent with prior PEFT work such as quantized adapter and neighboring low-budget adaptation studies. quantized adapter-scale efficiency work and broader benchmark papers such as MAPLE both suggest caution."
+      "Because the executed model identifier is not exposed in the writing payload, the paper-writing payload exposes only one explicit condition-to-baseline comparison and a set of per-condition confidence intervals, not the full numeric table for every cell. The present payload cannot establish robustness. The payload also contains an internal inconsistency. The repeated-seed design is therefore used as a screening instrument. The main report marks the objective as met, with accuracy_delta_vs_baseline=0.083332 against the >= 0.01 target, and verifier feedback status is pass. candidate condition b vs baseline condition improves accuracy delta vs baseline by 0.0833. The surviving preflight materials do not unambiguously identify the backbone actually used in the analyzed execution, so the manuscript can report only the registered preferred and fallback options rather than a confirmed executed model. The surviving compact record specifies the manipulated condition parameters and reported outcome metrics, but optimizer choice, learning rate, batch size, update count, prompt formatting, evaluation-harness specifics, and exact placement of dropout within adapter modules are not available. We therefore interpret the experiment as a governed preflight rather than as a fully reproducible benchmark recipe. For a small language-model preflight, the strongest defensible use of the result is triage: it nominates a configuration worth retesting under larger data or broader tasks, but it does not establish a general adapter rule. Consistent with prior compute-constrained adapter work and with the present run's generalizability limits in nearby resource-constrained studies, the conclusion remains narrow. Seed coverage is part of the evidence contract. The repeated condition cells with recorded seed coverage expose whether the observed mean gain is stable enough to motivate a larger run. The manuscript does not collapse this structure into a single best seed, and it keeps the baseline row visible so that later readers can audit the comparison unit. Hidden failures would invalidate this ceiling, but the run accounting used here reports scheduled and executed trials explicitly. That reading is consistent with prior method-family work such as quantized adapter and neighboring low-budget adaptation studies. quantized adapter-scale efficiency work and broader benchmark papers such as MAPLE both suggest caution."
     );
 
     expect(cleaned).not.toMatch(/\b(?:writing payload|paper-writing payload|present payload|The payload|repeated-seed design|verifier feedback status|unambiguously identify|evidence contract|audit|Hidden failures)\b/i);
@@ -973,9 +973,9 @@ describe("scientificWriting", () => {
         source_type: "analyzed_paper",
         comparison_role: "supporting",
         method_family: "evaluation and benchmarking",
-        problem_focus: "PEFT benchmark design for language models.",
+        problem_focus: "method-family benchmark design for language models.",
         setting_focus: "Benchmark evaluation.",
-        contribution_focus: "Evaluation breadth for PEFT.",
+        contribution_focus: "Evaluation breadth for method-family.",
         limitation_or_caveat: "Different task mix.",
         relation_to_study: "Supports positioning of benchmark scope.",
         year: 2024
@@ -1283,7 +1283,7 @@ describe("scientificWriting", () => {
         {
           heading: "Method",
           paragraphs: [
-            "This narrowing follows the same resource-conscious logic emphasized in prior PEFT work, where fixed memory and runtime budgets make selective comparison preferable to shallow coverage of every configuration.",
+            "This narrowing follows the same resource-conscious logic emphasized in prior method-family work, where fixed memory and runtime budgets make selective comparison preferable to shallow coverage of every configuration.",
             "The protocol compares high-rank adapter conditions under fixed data order.",
             "Training used an training dataset subset capped at 10,000 examples.",
             "The implementation notes indicate that optimizer settings and adapter target modules were held constant, although the compact study summary does not surface their exact numeric values in the manuscript-facing record.",
@@ -1335,7 +1335,7 @@ describe("scientificWriting", () => {
     expect(allText).not.toMatch(/doi:|15a1c2d8eb2c55e3ceb9ce9f72b3446ac1eb183a/);
     expect(allText).not.toMatch(/arXiv:\d{4}\.\d{4,5}/i);
     expect(allText).not.toMatch(/direct supporting evidence is currently limited/i);
-    expect(allText).not.toMatch(/present evidence base|compact release|released summary|reader-visible paper|prior warnings|prior PEFT work|P6 run|review gating|paper-readiness audit|Objective metric met/i);
+    expect(allText).not.toMatch(/present evidence base|compact release|released summary|reader-visible paper|prior warnings|prior method-family work|P6 run|review gating|paper-readiness audit|Objective metric met/i);
     expect(allText).not.toMatch(/compact results summary|compact artifact record|compact report|compact summary|compact bundle|manuscript-process/i);
     expect(allText).not.toMatch(/tables that are not shown/i);
     expect(allText).not.toMatch(/practical benchmark template/i);
@@ -1569,8 +1569,8 @@ describe("scientificWriting", () => {
           ? {
               ...section,
               paragraphs: [
-                "Adapter-variant studies instead modify the adapter mechanism itself, so their gains speak more directly to alternative PEFT parameterizations than to whether standard adapter at candidate conditions benefits from modest dropout in a local preflight.",
-                "quantized adapter shows memory-efficient adaptation (quantized adapter, arXiv:2305.14314), while MAPLE compares broader PEFT settings (MAPLE, arXiv:2403.14608).",
+                "Adapter-variant studies instead modify the adapter mechanism itself, so their gains speak more directly to alternative method-family parameterizations than to whether standard adapter at candidate conditions benefits from modest dropout in a local preflight.",
+                "quantized adapter shows memory-efficient adaptation (quantized adapter, arXiv:2305.14314), while MAPLE compares broader method-family settings (MAPLE, arXiv:2403.14608).",
                 ...section.paragraphs
               ]
             }
@@ -3658,7 +3658,7 @@ describe("scientificWriting", () => {
       keywords: ["adapter"],
       sections: [
         { heading: "Introduction", paragraphs: ["We study condition parameters under a fixed local budget."] },
-        { heading: "Related Work", paragraphs: ["quantized adapter and PEFT benchmarks motivate the local adapter question."] },
+        { heading: "Related Work", paragraphs: ["quantized adapter and method-family benchmarks motivate the local adapter question."] },
         { heading: "Method", paragraphs: ["The protocol uses a locked baseline condition and a higher-rank comparison."] },
         { heading: "Results", paragraphs: ["The candidate condition b cell had the strongest mean delta."] },
         { heading: "Discussion", paragraphs: ["The result is a follow-up signal rather than a broad conclusion."] },
