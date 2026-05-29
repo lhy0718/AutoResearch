@@ -1357,6 +1357,34 @@ export class ImplementSessionManager {
           }
         );
       }
+      const publicPlannedContractDocsRepair = await repairPublicPlannedConditionContractDocsSurface({
+        publicDir: prepared.publicDir,
+        contract: promptTaskSpec.context.planned_condition_contract
+      });
+      if (publicPlannedContractDocsRepair.artifactPaths.length > 0) {
+        prepared.publicArtifacts = dedupeStrings([
+          ...prepared.publicArtifacts,
+          ...publicPlannedContractDocsRepair.artifactPaths
+        ]);
+      }
+      if (publicPlannedContractDocsRepair.repaired) {
+        prepared.changedFiles = dedupeStrings([
+          ...prepared.changedFiles,
+          ...publicPlannedContractDocsRepair.artifactPaths
+        ]);
+        emitImplementObservation(
+          "verify",
+          publicPlannedContractDocsRepair.message ||
+            "Aligned public planned condition contract docs before design validation.",
+          {
+            attempt,
+            threadId: activeThreadId,
+            publicDir: prepared.publicDir,
+            scriptPath: prepared.scriptPath,
+            runCommand: prepared.runCommand
+          }
+        );
+      }
       const earlyStudyEntrypointArgsRepair = await repairPythonPublicStudyEntrypointArgsAliasSurface(
         prepared.scriptPath
       );
@@ -44469,6 +44497,84 @@ export async function materializePublicPlannedConditionContractArtifact(input: {
     repaired: true,
     artifactPath,
     message: `Materialized public planned condition contract artifact in ${path.basename(artifactPath)} before design validation.`
+  };
+}
+
+export async function repairPublicPlannedConditionContractDocsSurface(input: {
+  publicDir?: string;
+  contract?: PlannedConditionImplementationContract;
+}): Promise<{ repaired: boolean; artifactPaths: string[]; message?: string }> {
+  if (!input.publicDir || !input.contract) {
+    return { repaired: false, artifactPaths: [] };
+  }
+
+  const requiredRunCount = normalizeContractPositiveInteger(input.contract.required_run_count);
+  const requiredConditionCount = normalizeContractPositiveInteger(input.contract.required_condition_count);
+  const seedSchedule = (input.contract.seed_schedule || [])
+    .map((seed) => Number(seed))
+    .filter((seed) => Number.isInteger(seed));
+  if (requiredRunCount === undefined && requiredConditionCount === undefined && seedSchedule.length === 0) {
+    return { repaired: false, artifactPaths: [] };
+  }
+
+  const docNames = ["README.md", "README_study_report.md"];
+  const artifactPaths: string[] = [];
+  let repaired = false;
+  for (const docName of docNames) {
+    const docPath = path.join(input.publicDir, docName);
+    let source: string;
+    try {
+      source = await fs.readFile(docPath, "utf8");
+    } catch {
+      continue;
+    }
+    artifactPaths.push(docPath);
+    let nextSource = source;
+    if (seedSchedule.length > 0) {
+      nextSource = nextSource
+        .replace(/(Seeds per condition:\s*)\d+/giu, `$1${seedSchedule.length}`)
+        .replace(/(Each of the\s+)\d+(\s+conditions is executed for all\s+)\d+(\s+required seeds)/giu,
+          (_match, prefix: string, middle: string, suffix: string) =>
+            `${prefix}${requiredConditionCount ?? "approved"}${middle}${seedSchedule.length}${suffix}`
+        )
+        .replace(/(-\s*)\d+(\s+required seeds per condition\b)/giu, `$1${seedSchedule.length}$2`);
+    }
+    if (requiredRunCount !== undefined) {
+      nextSource = nextSource
+        .replace(/(Total runs:\s*)\d+/giu, `$1${requiredRunCount}`)
+        .replace(/(\b)\d+(\s+conditions\s*[×x]\s*)\d+(\s+seeds\s*=\s*)\d+(\s+total runs\b)/giu,
+          (_match, prefix: string, middleA: string, middleB: string, suffix: string) =>
+            `${prefix}${requiredConditionCount ?? "approved"}${middleA}${seedSchedule.length || "approved"}${middleB}${requiredRunCount}${suffix}`
+        )
+        .replace(/(-\s*)\d+(\s+total runs\b)/giu, `$1${requiredRunCount}$2`);
+    }
+
+    const marker = "<!-- _autolabos_public_planned_contract_docs_marker -->";
+    if (!nextSource.includes(marker)) {
+      const contractLines = [
+        "",
+        marker,
+        "## Approved Design Contract",
+        requiredConditionCount !== undefined ? `- Required conditions: ${requiredConditionCount}` : undefined,
+        seedSchedule.length > 0 ? `- Seeds per condition: ${seedSchedule.length}` : undefined,
+        requiredRunCount !== undefined ? `- Total runs: ${requiredRunCount}` : undefined,
+        ""
+      ].filter((line): line is string => line !== undefined);
+      nextSource = `${nextSource.replace(/\s*$/u, "\n")}${contractLines.join("\n")}`;
+    }
+
+    if (nextSource !== source) {
+      await fs.writeFile(docPath, nextSource, "utf8");
+      repaired = true;
+    }
+  }
+
+  return {
+    repaired,
+    artifactPaths,
+    message: repaired
+      ? `Aligned public planned condition contract docs with the approved repeated-run count before design validation.`
+      : undefined
   };
 }
 

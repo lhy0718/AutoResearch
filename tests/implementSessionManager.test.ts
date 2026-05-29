@@ -254,6 +254,7 @@ import {
   repairPythonPublicStudyTopLevelRunnerAliasSurface,
   repairPythonFinalCliLockedGridResolverSurface,
   materializePublicPlannedConditionContractArtifact,
+  repairPublicPlannedConditionContractDocsSurface,
   repairPublishedRunCommandWrapperBinding,
   resolvePythonVerificationScriptPath,
   selectRecoveredPublicBundleScriptPath,
@@ -6685,6 +6686,101 @@ describe("ImplementSessionManager", () => {
     });
     expect(publicRepair.repaired).toBe(true);
     expect(publicRepair.artifactPath).toBe(path.join(workspace, "locked_condition_contract.json"));
+
+    const allowedValidation = await validateDesignImplementationAlignment({
+      plannedConditionContract: contract,
+      attempt: {
+        runCommand: `python3 ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        metricsPath: path.join(workspace, "metrics.json"),
+        workingDir: workspace,
+        publicDir: workspace,
+        changedFiles: [scriptPath, readmePath, publicRepair.artifactPath || ""],
+        publicArtifacts: [scriptPath, readmePath, publicRepair.artifactPath || ""]
+      }
+    });
+    expect(allowedValidation.verdict).toBe("allow");
+  });
+
+  it("aligns public README run-count declarations with the approved repeated-run contract", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-public-contract-docs-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    const readmePath = path.join(workspace, "README.md");
+    writeFileSync(
+      scriptPath,
+      [
+        "PLANNED_CONDITION_MARKERS = ('baseline_condition', 'candidate_condition_a', 'candidate_condition_b')",
+        "REQUIRED_CONDITION_COUNT = 3",
+        "SEED_SCHEDULE = (11, 22, 33)",
+        "REQUIRED_RUN_COUNT = 9",
+        "def main():",
+        "    return 0",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      readmePath,
+      [
+        "# Condition Sweep",
+        "",
+        "- Seeds per condition: 2",
+        "- Total runs: 6",
+        "Each of the 3 conditions is executed for all 2 required seeds.",
+        "- `3 conditions x 2 seeds = 6 total runs`",
+        "- 2 required seeds per condition",
+        "- 6 total runs",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const contract = {
+      required_condition_count: 3,
+      required_run_count: 9,
+      seed_schedule: [11, 22, 33],
+      baseline_condition_marker: "baseline_condition",
+      required_condition_markers: [
+        "baseline_condition",
+        "candidate_condition_a",
+        "candidate_condition_b"
+      ]
+    };
+    const publicRepair = await materializePublicPlannedConditionContractArtifact({
+      publicDir: workspace,
+      contract
+    });
+
+    const blockedValidation = await validateDesignImplementationAlignment({
+      plannedConditionContract: contract,
+      attempt: {
+        runCommand: `python3 ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        metricsPath: path.join(workspace, "metrics.json"),
+        workingDir: workspace,
+        publicDir: workspace,
+        changedFiles: [scriptPath, readmePath, publicRepair.artifactPath || ""],
+        publicArtifacts: [scriptPath, readmePath, publicRepair.artifactPath || ""]
+      }
+    });
+    expect(blockedValidation.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "PUBLIC_RUN_COUNT_CONTRACTED" })
+      ])
+    );
+
+    const docsRepair = await repairPublicPlannedConditionContractDocsSurface({
+      publicDir: workspace,
+      contract
+    });
+
+    expect(docsRepair.repaired).toBe(true);
+    const repairedReadme = readFileSync(readmePath, "utf8");
+    expect(repairedReadme).toContain("- Seeds per condition: 3");
+    expect(repairedReadme).toContain("- Total runs: 9");
+    expect(repairedReadme).toContain("3 conditions x 3 seeds = 9 total runs");
+    expect(repairedReadme).not.toContain("6 total runs");
 
     const allowedValidation = await validateDesignImplementationAlignment({
       plannedConditionContract: contract,
