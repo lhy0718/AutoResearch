@@ -9432,6 +9432,168 @@ describe("ImplementSessionManager", () => {
     });
   });
 
+  it("repairs lookup callable class-selection metrics feedback on the existing public bundle before Codex", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-lookup-callable-preflight-repair-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Lookup Callable Preflight Repair",
+      topic: "repair reusable runner selection",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    run.graph.nodeStates.run_experiments.status = "failed";
+    mkdirSync(path.dirname(run.memoryRefs.episodePath), { recursive: true });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - repair_lookup_callable_selection\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const scriptPath = path.join(publicDir, "run_condition_sweep_experiment.py");
+    const readmePath = path.join(publicDir, "README.md");
+    const metricsPath = path.join(runDir, "metrics.json");
+    mkdirSync(publicDir, { recursive: true });
+    writeFileSync(metricsPath, "{\"status\":\"failed\"}\n", "utf8");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import json",
+        "from dataclasses import dataclass",
+        "from pathlib import Path",
+        "from typing import Any, Optional, Sequence",
+        "",
+        "@dataclass(frozen=True)",
+        "class StudySpec:",
+        "    name: str = 'default'",
+        "",
+        "def run_study_loop(options=None):",
+        "    payload = {'status': 'completed', 'runner': 'run_study_loop'}",
+        "    Path('executed.json').write_text(json.dumps(payload), encoding='utf-8')",
+        "    return payload",
+        "",
+        "def _lookup_callable_by_name(*names: str) -> Optional[Any]:",
+        "    for name in names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def _lookup_callable_by_tokens(required_tokens: Sequence[str], excluded_tokens: Sequence[str] = (), excluded_names: Sequence[str] = ()) -> Optional[Any]:",
+        "    candidates = []",
+        "    excluded_name_set = {str(name) for name in excluded_names}",
+        "    for name, candidate in globals().items():",
+        "        if name in excluded_name_set or not callable(candidate):",
+        "            continue",
+        "        lowered = name.lower()",
+        "        if any(token not in lowered for token in required_tokens):",
+        "            continue",
+        "        if any(token in lowered for token in excluded_tokens):",
+        "            continue",
+        "        priority = 0",
+        "        if not name.startswith('_'):",
+        "            priority -= 2",
+        "        priority += lowered.count('_')",
+        "        priority += len(lowered)",
+        "        candidates.append((priority, name, candidate))",
+        "    if not candidates:",
+        "        return None",
+        "    candidates.sort(key=lambda item: (item[0], item[1]))",
+        "    return candidates[0][2]",
+        "",
+        "def main() -> int:",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path')",
+        "    args = parser.parse_args()",
+        "    runner = _lookup_callable_by_name('missing')",
+        "    if runner is None:",
+        "        runner = _lookup_callable_by_tokens(required_tokens=('study',), excluded_tokens=('summary',), excluded_names=('main',))",
+        "    result = runner()",
+        "    if isinstance(result, dict) and args.metrics_path:",
+        "        Path(args.metrics_path).write_text(json.dumps(result), encoding='utf-8')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      readmePath,
+      [
+        "# Existing Bundle",
+        "",
+        "```bash",
+        "python " + toWorkspaceRelative(workspace, scriptPath) + " --metrics-path " + toWorkspaceRelative(workspace, metricsPath),
+        "```"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put("implement_experiments.thread_id", "thread-stale-lookup-callable-repair");
+    await memory.put("implement_experiments.script", scriptPath);
+    await memory.put("implement_experiments.run_command", "python " + JSON.stringify(scriptPath) + " --metrics-path " + JSON.stringify(metricsPath));
+    run.nodeThreads.implement_experiments = "thread-stale-lookup-callable-repair";
+    await runStore.updateRun(run);
+    await memory.put("implement_experiments.runner_feedback", {
+      source: "run_experiments",
+      status: "fail",
+      trigger: "auto_handoff",
+      stage: "metrics",
+      summary: "Experiment metrics payload reports failed status.",
+      command: "python " + JSON.stringify(scriptPath) + " --metrics-path " + JSON.stringify(metricsPath),
+      metrics_path: metricsPath,
+      stdout_excerpt: "Study finished with status=failed exit_code=2 metrics_path=" + metricsPath,
+      suggested_next_action: "Repair the reusable callable resolver before regenerating the bundle.",
+      recorded_at: "2026-05-21T02:00:00.000Z"
+    });
+
+    let callCount = 0;
+    const codex = {
+      runTurnStream: async () => {
+        callCount += 1;
+        throw new Error("Codex should not be used for deterministic lookup callable repair");
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: publicDir });
+
+    expect(callCount).toBe(0);
+    expect(result.scriptPath).toBe(scriptPath);
+    expect(result.rawResponse).toContain("Recovered implement result from a materialized public experiment bundle");
+    expect(await memory.get("implement_experiments.runner_feedback")).toBeNull();
+    expect(await memory.get("run_experiments.feedback_for_implementer")).toBeNull();
+    expect(repairedSource).toContain("_autolabos_lookup_callable_skip_classes_marker");
+    expect(JSON.parse(readFileSync(path.join(publicDir, "executed.json"), "utf8"))).toMatchObject({
+      status: "completed",
+      runner: "run_study_loop"
+    });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      status: "completed",
+      runner: "run_study_loop"
+    });
+  });
+
 
   it("repairs unfilled sectioned CLI feedback on the existing public bundle before Codex", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-sectioned-cli-preflight-repair-"));

@@ -14598,7 +14598,8 @@ async function applyRecoverableBundleDeterministicRepairs(params: {
       params.runnerFeedbackDiagnosticText
     ),
     await repairPythonDanglingKeywordOnlyDefaultSyntaxSurface(params.scriptPath, params.runnerFeedback),
-    await repairPythonMainFindCallableStudyResolverSurface(params.scriptPath)
+    await repairPythonMainFindCallableStudyResolverSurface(params.scriptPath),
+    await repairPythonLookupCallableClassSelectionSurface(params.scriptPath)
   ];
   const messages = repairs
     .filter((repair) => repair.repaired && repair.message)
@@ -15282,6 +15283,10 @@ function isRecoverableBundleDeterministicRepairFeedback(
     /AttributeError:\s*['"][^'"]+['"] object has no attribute ['"]get['"]/u.test(summary) ||
     /status=failed; completed=0\/\d+; baseline_first=True/u.test(summary) ||
     /Experiment metrics payload reports success=false/u.test(summary) ||
+    (
+      /Experiment metrics payload reports failed status/u.test(summary) &&
+      /Study finished with status=failed\s+exit_code=2/u.test(summary)
+    ) ||
     /KeyError:\s*['"]planned_run['"]/u.test(summary) ||
     /Unable to resolve required callable from candidates/u.test(summary) ||
     /AUTOLABOS SECTION skeleton markers|Unfilled or unstripped section marker|Final experiment scripts must contain executable code/iu.test(summary) ||
@@ -15304,6 +15309,7 @@ function hasRecoverableBundleDeterministicRepairMarker(source: string): boolean 
     "_autolabos_keyword_only_default_call_marker",
     "_autolabos_unexpected_keyword_parameter_marker",
     "_autolabos_flexible_invocation_planned_run_alias_marker",
+    "_autolabos_lookup_callable_skip_classes_marker",
     "_autolabos_skip_callable_classes_marker"
   ].some((marker) => source.includes(marker));
 }
