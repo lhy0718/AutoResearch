@@ -12272,6 +12272,15 @@ export function buildLocalPythonUtilityChunkContent(
   }
 
   return [
+    "import json",
+    "import math",
+    "import os",
+    "from dataclasses import asdict",
+    "from datetime import datetime, timezone",
+    "from pathlib import Path",
+    "from typing import Mapping",
+    "",
+    "",
     "def utc_now_iso():",
     "    return datetime.now(timezone.utc).isoformat().replace(\"+00:00\", \"Z\")",
     "",
@@ -12355,6 +12364,13 @@ export function buildLocalPythonUtilityChunkContent(
 
 function buildLocalPythonMetricsPayloadChunkContent(): string {
   return [
+    "import json",
+    "import math",
+    "import os",
+    "from dataclasses import asdict",
+    "from pathlib import Path",
+    "",
+    "",
     "def _autolabos_metric_to_jsonable(value):",
     "    if hasattr(value, \"to_dict\") and callable(value.to_dict):",
     "        return _autolabos_metric_to_jsonable(value.to_dict())",

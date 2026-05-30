@@ -15,6 +15,60 @@ Path placeholders:
 
 ---
 
+## Issue: LV-455
+
+- Status: reproduced in same-flow P6 validation on 2026-05-30; source repair implemented; focused automated validation passed; same-flow retry pending
+- Validation target: implement_experiments local Python helper materialization must produce standalone chunks when the chunk is inserted before LLM-generated import sections.
+- Environment/session context: existing P6 validation run 3bc89107-909f-4315-9340-d75ce02eb0e0 in <validation-workspace>, after the strengthened 12-condition x 3-seed design completed implement_experiments and handed off to run_experiments.
+
+- Reproduction steps:
+  1. Approve implement_experiments and run run_experiments through scripts/p6-approve-and-run-next.py with the active validation run.
+  2. Observe run_experiments py_compile pass for the generated runner.
+  3. Observe the generated runner fail at process startup before normal metrics emission.
+  4. Observe AutoLabOS retry run_experiments 3/3 times, restore preexisting metrics after each rejected attempt, and roll back to implement_experiments.
+
+- Expected behavior:
+  - Locally materialized generic Python helper chunks should include the imports they require when they may be placed at file top.
+  - A generated runner should not fail with NameError before argparse or runtime setup because deterministic helper chunks referenced Path/json/math/os/asdict without importing them.
+  - Stale metrics from previous attempts should remain rejected and restored rather than satisfying the current run.
+
+- Actual behavior:
+  - run_experiments failed three times with `NameError: name 'Path' is not defined` at line 172 of the node-generated runner.
+  - The missing import came from local helper chunks that used Path/json/math/os/asdict but relied on later LLM-generated imports.
+  - AutoLabOS correctly restored the previous metrics file after each rejected attempt and rolled the workflow back to implement_experiments.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately reproduced; the issue was observed in the existing active P6 validation run.
+  - Existing session: reproduced on the active resumed run immediately after the current implement_experiments output was approved.
+  - Divergence: no UI-only divergence observed; the defect is generated-runner import ordering caused by deterministic local materialization.
+
+- Root cause hypothesis:
+  - Type: persisted_state_bug
+  - Hypothesis: deterministic helper materialization emits code sections without a self-contained import prelude, while the sectioned writer may place those chunks before the generated import block. This creates a syntactically valid file that passes py_compile but fails at import-time when top-level constants call Path.
+
+- Code/test changes:
+  - Code: src/core/agents/implementSessionManager.ts now includes import preludes in locally materialized generic Python JSON/path and metrics payload helper chunks.
+  - Tests: tests/implementSessionManager.test.ts now executes these helper chunks without pre-supplying imports so the regression catches top-of-file placement failures.
+
+- Regression status:
+  - Same-flow reproduction complete.
+  - Focused regression passed: TMPDIR=/tmp npm test -- tests/implementSessionManager.test.ts -t "generic Python".
+  - Public-code guard passed: TMPDIR=/tmp npm test -- tests/publicCodeSanitization.test.ts.
+  - Build passed: npm run build.
+  - Whitespace check passed: git diff --check.
+  - Same-flow retry pending.
+
+- Remaining risks:
+  - The next implement_experiments retry must regenerate the runner through AutoLabOS; the coding agent must not patch the run artifact directly.
+  - The strengthened design still needs run_experiments to execute with the intended full condition/seed contract rather than stopping at another generated-runner contract issue.
+
+- Evidence/artifacts:
+  - <repo-root>/outputs/p6-preflight/p6-continue-run_experiments-output.txt
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json
+  - <validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_experiment.py
+
+---
+
 ## Issue: LV-454
 
 - Status: reproduced in same-flow P6 validation on 2026-05-30; source repair implemented; focused automated validation passed; same-flow retry pending

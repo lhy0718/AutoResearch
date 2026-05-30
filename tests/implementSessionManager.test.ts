@@ -432,13 +432,6 @@ describe("ImplementSessionManager", () => {
       writeFileSync(
         scriptPath,
         [
-          "import json",
-          "import math",
-          "import os",
-          "from dataclasses import asdict, dataclass",
-          "from datetime import datetime, timezone",
-          "from pathlib import Path",
-          "from typing import Mapping",
           content || "",
           "",
           "target = Path('out') / 'metrics.json'",
@@ -472,11 +465,6 @@ describe("ImplementSessionManager", () => {
       writeFileSync(
         scriptPath,
         [
-          "import json",
-          "import math",
-          "import os",
-          "from dataclasses import asdict",
-          "from pathlib import Path",
           content || "",
           "",
           "records = [",
