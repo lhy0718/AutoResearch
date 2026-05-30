@@ -455,6 +455,65 @@ describe("ImplementSessionManager", () => {
     }
   });
 
+  it("materializes generic Python metrics payload helper chunks locally", () => {
+    const content = buildLocalPythonUtilityChunkContent("/tmp/public/runner.py", {
+      title: "Aggregate repeated-seed summaries and metrics JSON emission",
+      purpose: "Build generic success and failure metrics payloads from condition seed records.",
+      content_kind: "code_section"
+    });
+
+    expect(content).toContain("def build_success_metrics_payload");
+    expect(content).toContain("def build_condition_metric_summaries");
+    expect(content).not.toContain("TRAIN_MICRO_BATCH_SIZE");
+
+    const root = mkdtempSync(path.join(os.tmpdir(), "autolabos-local-python-metrics-"));
+    try {
+      const scriptPath = path.join(root, "runner.py");
+      writeFileSync(
+        scriptPath,
+        [
+          "import json",
+          "import math",
+          "import os",
+          "from dataclasses import asdict",
+          "from pathlib import Path",
+          content || "",
+          "",
+          "records = [",
+          "    {'condition_marker': 'baseline_condition', 'seed': 1, 'accuracy': 0.5},",
+          "    {'condition_marker': 'baseline_condition', 'seed': 2, 'accuracy': 0.7},",
+          "    {'condition_marker': 'candidate_condition_a', 'seed': 1, 'accuracy': 0.8},",
+          "    {'condition_marker': 'candidate_condition_a', 'seed': 2, 'accuracy': 0.6},",
+          "]",
+          "payload = build_success_metrics_payload(records, baseline_marker='baseline_condition')",
+          "assert payload['baseline_metric'] == 0.6",
+          "assert payload['best_condition_marker'] == 'candidate_condition_a'",
+          "assert abs(payload['accuracy_delta_vs_baseline'] - 0.1) < 1e-9",
+          "write_metrics_payload(Path('out') / 'metrics.json', payload)",
+          "loaded = json.load(open(Path('out') / 'metrics.json', encoding='utf-8'))",
+          "assert loaded['status'] == 'completed'",
+          "failure = build_failure_metrics_payload('boom')",
+          "assert failure['success'] is False",
+          "",
+        ].join("\n"),
+        "utf8"
+      );
+      execFileSync("python3", [scriptPath], { cwd: root });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not locally materialize experiment-specific Python execution chunks as metrics helpers", () => {
+    const content = buildLocalPythonUtilityChunkContent("/tmp/public/runner.py", {
+      title: "Per-condition per-seed subprocess execution helper",
+      purpose: "Run model subprocesses for each condition and seed.",
+      content_kind: "code_section"
+    });
+
+    expect(content).toBeUndefined();
+  });
+
   it("excludes regenerated dependency and model caches from attempt snapshots", () => {
     expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", ".cache", "hf", "models--provider--model"))).toBe(true);
     expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", ".hf_cache", "models--provider--model"))).toBe(true);

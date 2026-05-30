@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-05-29
+Last updated: 2026-05-30
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
@@ -12,6 +12,61 @@ Usage rules:
 Path placeholders:
 - `<validation-workspace>` means the AutoLabOS live-validation workspace root. By default this is the sibling `.autolabos-validation/` directory next to the repo root, which is commonly `~/.autolabos-validation/` when the repo is checked out under the user's home directory. It can be overridden with `AUTOLABOS_VALIDATION_WORKSPACE_ROOT`.
 - `<repo-root>` means the local AutoLabOS implementation checkout.
+
+---
+
+## Issue: LV-454
+
+- Status: reproduced in same-flow P6 validation on 2026-05-30; source repair implemented; focused automated validation passed; same-flow retry pending
+- Validation target: implement_experiments staged materialization should locally materialize generic condition/seed metrics payload builders instead of spending the live paper run's bounded helper window on reusable metrics scaffolding.
+- Environment/session context: existing P6 validation run 3bc89107-909f-4315-9340-d75ce02eb0e0 in <validation-workspace>, after LV-453 forced stale-metrics rejection and backtracked from run_experiments to implement_experiments.
+
+- Reproduction steps:
+  1. Resume the active P6 validation run at implement_experiments through scripts/p6-approve-and-run-next.py with AUTOLABOS_P6_NEXT_TIMEOUT_SEC=1800 and AUTOLABOS_P6_NEXT_MAX_WALL_SEC=7200.
+  2. Observe implement_experiments staged materialization progress through attempt 2/3.
+  3. Observe large generic runner sections for repeated-seed summaries, top-level result handling, delegated output loading, metric extraction helpers, and per-condition/per-seed loops consume the bounded live helper window.
+  4. Observe the helper stop at the max-wall cap before a natural node boundary.
+
+- Expected behavior:
+  - AutoLabOS should reserve LLM materialization budget for experiment-specific logic.
+  - Generic metrics payload, condition summary, success/failure payload, and metrics writer helpers should be materialized deterministically when the section title/purpose is generic enough.
+  - The generated runner should remain node-owned and validated; the coding agent must not hand-author experiment scripts, metrics, or outputs as substitutes.
+
+- Actual behavior:
+  - The same-flow retry timed out after 7200 seconds while implement_experiments was still materializing generic metrics and aggregation code.
+  - The workflow persisted a failed implement_experiments state instead of reaching a fresh runner execution boundary.
+  - No node-owned artifacts were manually substituted; the blocker is the node's own staged-materialization budget boundary.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately reproduced; the issue was observed in the existing active P6 validation run.
+  - Existing session: reproduced on the active resumed run while repairing the generated runner after LV-453.
+  - Divergence: no UI-only divergence observed; the defect is a node-local staged materialization budget/recovery issue.
+
+- Root cause hypothesis:
+  - Type: race_timing_bug
+  - Hypothesis: staged materialization treats generic metrics payload/aggregation builders as experiment-specific code, so reusable metrics scaffolding can consume repeated LLM calls and exhaust the helper wall-clock cap before the node reaches later validation or execution boundaries.
+
+- Code/test changes:
+  - Code: src/core/agents/implementSessionManager.ts now locally materializes generic metrics payload, condition summary, success/failure payload, and metrics writer helpers when a section title/purpose is clearly generic.
+  - Tests: tests/implementSessionManager.test.ts covers local generic metrics payload helper materialization with neutral condition names and verifies execution-specific subprocess chunks are not locally substituted.
+
+- Regression status:
+  - Same-flow reproduction complete.
+  - Focused regression passed: TMPDIR=/tmp npm test -- tests/implementSessionManager.test.ts -t "generic Python".
+  - Execution-boundary regression passed: TMPDIR=/tmp npm test -- tests/implementSessionManager.test.ts -t "experiment-specific Python execution".
+  - Public-code guard passed: TMPDIR=/tmp npm test -- tests/publicCodeSanitization.test.ts.
+  - Build passed: npm run build.
+  - Whitespace check passed: git diff --check.
+  - Same-flow retry is still required.
+
+- Remaining risks:
+  - Local metrics helper materialization must stay generic and avoid encoding model, task, benchmark, or condition-value identifiers in public source/tests.
+  - Later generated-runner contract issues may still surface after this budget blocker is removed.
+
+- Evidence/artifacts:
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/status.json
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/progress.jsonl
+  - <repo-root>/outputs/p6-preflight/p6-continue-implement_experiments-output.txt
 
 ---
 
